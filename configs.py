@@ -75,7 +75,7 @@ def arg_parse():
     parser.set_defaults(datadir='data', # io_parser
                         logdir='log',
                         ckptdir='ckpt',
-                        dataset='syn1',
+                        dataset='syn2',
                         opt='adam',   # opt_parser
                         opt_scheduler='none',
                         max_nodes=100,

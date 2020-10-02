@@ -1157,7 +1157,6 @@ def main():
     elif prog_args.pkl_fname is not None:
         pkl_task(prog_args)
     elif prog_args.dataset is not None:
-        #prog_args.dataset = 'syn2'
         if prog_args.dataset == "syn1":
             syn_task1(prog_args, writer=writer)
         elif prog_args.dataset == "syn2":

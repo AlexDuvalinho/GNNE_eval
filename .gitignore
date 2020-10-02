@@ -115,5 +115,6 @@ path/
 
 .idea/
 .vscode/
+.DS_Store
 
 

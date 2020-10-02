@@ -226,7 +226,6 @@ def preprocess_graph(G, labels, normalize_adj=False):
 	return f, edge_index, labels
 
 
-
 def transform_data(adj, x, labels):
 
 	data = SimpleNamespace()
@@ -268,6 +267,7 @@ def extract_test_nodes(data, num_samples, train_indexes):
 
 	return node_indices
 
+
 def main():
 	# Load a configuration
 	prog_args = arg_parse()
@@ -291,7 +291,7 @@ def main():
 	else:
 		writer = None
 
-	# Load a model checkpoint	
+	# Load data and a model checkpoint
 	ckpt = io_utils.load_ckpt(prog_args)
 	cg_dict = ckpt["cg"]  # get computation graph
 	input_dim = cg_dict["feat"].shape[2]
@@ -299,7 +299,7 @@ def main():
 	print("Loaded model from {}".format(prog_args.ckptdir))
 	print("input dim: ", input_dim, "; num classes: ", num_classes)
 
-	# Determine explainer mode
+	# Determine explainer mode (node classif)
 	graph_mode = (
 		prog_args.graph_mode
 		or prog_args.multigraph_class >= 0
@@ -340,32 +340,30 @@ def main():
 	# Load state_dict (obtained by model.state_dict() when saving checkpoint)
 	model.load_state_dict(ckpt["model_state"])
 
-	# Convertion data required to get correct model output
+	# Convertion data required to get correct model output for GraphSHAP
 	adj = torch.tensor(cg_dict["adj"], dtype=torch.float)
 	x = torch.tensor(cg_dict["feat"], requires_grad=True, dtype=torch.float)
 	y_pred, att_adj = model(x, adj)
-
-	# G, labels, name = gengraph.gen_syn1(
-	# 			feature_generator=featgen.ConstFeatureGen(
-	# 			np.ones(10, dtype=float))
-	# 	)
 
 	# Transform their data into our format 
 	data = transform_data(adj, x, cg_dict["label"][0].tolist())
 	
 	# Generate test nodes
-	# node_indices = extract_test_nodes(data, num_samples=10, cg_dict['train_idx'])
 	# Use only these specific nodes as they are the ones added manually, part of the defined shapes 
+	# node_indices = extract_test_nodes(data, num_samples=10, cg_dict['train_idx'])
+	k=5 # number of nodes for the shape introduced (house, cycle)
 	if prog_args.dataset == 'syn1':
-		node_indices = list(range(400,410,5))
+		node_indices = list(range(400,425,5))
 	elif prog_args.dataset=='syn2':
 		node_indices = list(range(400,410,5)) + list(range(1100,1110,5))
 	elif prog_args.dataset == 'syn4':
 		node_indices = list(range(511,535,6))
+		k=4
 	elif prog_args.dataset == 'syn5':
 		node_indices = list(range(511, 556, 9))
+		k=8 # with 2 hops, only a few appear
 
-	# Explainer
+	# GraphSHAP explainer
 	graphshap = GraphSHAP(data, model, adj, x)
 
 	# Run GNN Explainer and retrieve produced explanations
@@ -386,6 +384,7 @@ def main():
 	# GraphSHAP - assess accuracy of explanations
 	# Loop over test nodes
 	accuracy = []
+	feat_accuracy = []
 	for node_idx in node_indices: 
 		
 		graphshap_explanations = graphshap.explain(node_idx,
@@ -397,31 +396,45 @@ def main():
 		pred_val, predicted_class = y_pred[0, node_idx, :].max(dim=0)
 
 		# Keep only node explanations 
-		graphshap_explanations = graphshap_explanations[graphshap.F:,
+		graphshap_node_explanations = graphshap_explanations[graphshap.F:,
                                                   predicted_class]
 		
 		# Derive ground truth from graph structure 
 		# TODO: check if this holds for other datasets
-		ground_truth = list(range(node_idx,node_idx+5))
+		ground_truth = list(range(node_idx+1,node_idx+k))
 
-		# Retrieve top k elements indices form graphshap_explanations
-		if graphshap.neighbours.shape[0] > 4: 
+		# Retrieve top k elements indices form graphshap_node_explanations
+		if graphshap.neighbours.shape[0] > k: 
 			i = 0
 			val, indices = torch.topk(torch.tensor(
-				graphshap_explanations), k=len(ground_truth)-1)
+				graphshap_node_explanations), k)
 			# could weight importance based on val 
 			for node in graphshap.neighbours[indices]: 
 				if node in ground_truth:
 					i += 1
 			# Sort of accruacy metric
 			accuracy.append(i / len(indices)) 
+		
+		if prog_args.dataset=='syn2':
+			graphshap_feat_explanations = graphshap_explanations[:graphshap.F,
+                                                    predicted_class]
+			print('Feature importance graphshap', graphshap_feat_explanations)
+			if np.argsort(graphshap_feat_explanations)[-1] == 0:
+				feat_accuracy.append(1)
+			else: 
+				feat_accuracy.append(0)
+			
+			# Look at importance distribution among features 
+			# Identify most important features and check if it corresponds to truly imp ones
+			# feat_imp, feat_indices = torch.topk(torch.tensor(
+            #                 graphshap_feat_explanations), k=10)
 
 	# Metric for graphshap
 	final_accuracy = sum(accuracy)/len(accuracy)
 	
 	### GNNE 
 	# Explain a set of nodes - accuracy on edges this time
-	gnne_explanations, gnne_accuracy, gnne_auc =\
+	_, gnne_edge_accuracy, gnne_auc, gnne_node_accuracy =\
 		gnne.explain_nodes_gnn_stats(
 			node_indices, prog_args
 		)
@@ -430,23 +443,20 @@ def main():
 	
 	### GRAD benchmark
 	#  MetricS to assess quality of predictionsx
-	grad_explanations, grad_accuracy, grad_auc =\
+	_, grad_edge_accuracy, grad_auc, grad_node_accuracy =\
             gnne.explain_nodes_gnn_stats(
                 node_indices, prog_args, model="grad")
 
-	print('Accuracy for GraphSHAP is {:.2f} vs {:.2f} for GNNE vs {:.2f} for GRAD'.format(
-		final_accuracy, np.mean(gnne_accuracy), np.mean(grad_accuracy)))
-	print('GNNE auc is:', gnne_auc)
+	print('Accuracy for GraphSHAP is {:.2f} vs {:.2f},{:.2f} for GNNE vs {:.2f},{:.2f} for GRAD'.format(
+		final_accuracy, np.mean(gnne_edge_accuracy), np.mean(gnne_node_accuracy), 
+		np.mean(grad_edge_accuracy), np.mean(grad_node_accuracy) ) 
+		)
+	if prog_args.dataset=='syn2':
+		print('Most important feature was found in {:.2f}% of the case'.format(np.mean(accuracy)))
 
-	
 	### GAT 
-	# Collect attention weights from GAT model in the correct format 
-	# att_weights = torch.mean(att_adj[0, :, :, :], axis=2)
-	# att_weights[node_indices,:]
+	# Nothing for now - implem a GAT on the side and look at weights coef 
 
-	# Vizualise subgraphs for each of them 
 	
-	
-
 if __name__ == "__main__":
 	main()

@@ -297,12 +297,16 @@ class Explainer:
             self.explain(node_idx, graph_idx=graph_idx, model=model)
             for node_idx in node_indices
         ]
+        # Define number of edges in specific the shape introduced
+        k = 10 if self.args.dataset == 'syn5' else 6
+
         # pdb.set_trace()
         graphs = []
         feats = []
         adjs = []
         pred_all = []
         real_all = []
+        node_imp = []
         for i, idx in enumerate(node_indices):
             new_idx, _, feat, _, _ = self.extract_neighborhood(idx)
             G = io_utils.denoise_graph(masked_adjs[i], new_idx, feat, threshold_num=20)
@@ -320,11 +324,16 @@ class Explainer:
                 "graph/{}_{}_{}".format(self.args.dataset, model, i),
                 identify_self=True,
             )
-
+            # Compute importance of nodes based on all incident edges (av. imp)
+            n = np.concatenate((np.mean(denoised_adj, axis=1)), axis=1).tolist()[0]
+            # Check among (k-2) most important nodes, how many are member of the shape
+            node_imp.append(
+                len( set(np.array(G.nodes())[np.argsort(n)[-k+2:]]
+                    ).intersection(set(range(new_idx+1, new_idx+k))) ) / (k-2) 
+            )
+        
         # Also look at top 6 edges (because cycle - adapt to grid dataset)
         # Compute accuracy: how many of top 6 belong to shape
-        k=10 if self.args.dataset == 'syn5' else 6
-
         accuracy = []
         for obs, real_obs in zip(pred_all, real_all): 
             accuracy.append( np.sum(real_obs[np.argsort(obs)[-k:]])/ k )
@@ -348,7 +357,7 @@ class Explainer:
                 )
             )
 
-        return masked_adjs, accuracy, auc_all
+        return masked_adjs, accuracy, auc_all, node_imp
 
     # GRAPH EXPLAINER
     def explain_graphs(self, graph_indices):
