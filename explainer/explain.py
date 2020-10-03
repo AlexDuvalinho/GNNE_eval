@@ -318,6 +318,7 @@ class Explainer:
             graphs.append(G)
             feats.append(denoised_feat)
             adjs.append(denoised_adj)
+            # Vizu
             io_utils.log_graph(
                 self.writer,
                 G,
@@ -344,11 +345,11 @@ class Explainer:
         auc_all = roc_auc_score(real_all, pred_all)
         precision, recall, thresholds = precision_recall_curve(real_all, pred_all)
 
-        #plt.switch_backend("agg")
-        #plt.plot(recall, precision)
-        #plt.savefig("log/pr/pr_" + self.args.dataset + "_" + model + ".png")
+        plt.switch_backend("agg")
+        plt.plot(recall, precision)
+        plt.savefig("log/pr/pr_" + self.args.dataset + "_" + model + ".png")
 
-        #plt.close()
+        plt.close()
 
         with open("log/pr/auc_" + self.args.dataset + "_" + model + ".txt", "w") as f:
             f.write(

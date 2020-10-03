@@ -4,19 +4,22 @@ from copy import deepcopy
 import torch_geometric
 import torch
 import matplotlib.pyplot as plt
-
 import seaborn as sns
-
+import statistics
+import os
 from copy import copy
 from math import sqrt
 import networkx as nx
+import tensorboardX
 from torch_geometric.nn import MessagePassing
 from torch_geometric.data import Data
 from torch_geometric.utils import k_hop_subgraph, to_networkx
 
+from utils.io_utils import gen_explainer_prefix, gen_prefix
+
 class GraphSHAP():
 
-	def __init__(self, data, model, adj, x):
+	def __init__(self, data, model, adj, x, writer, args_dataset):
 		self.model = model
 		self.data = data
 		self.model.eval()
@@ -25,6 +28,8 @@ class GraphSHAP():
 		self.F = None
 		self.x = x
 		self.adj = adj
+		self.writer = writer
+		self.args_dataset = args_dataset
 
 	def explain(self, node_index=0, hops=2, num_samples=10, info=True):
 		"""
@@ -83,8 +88,31 @@ class GraphSHAP():
 
 		### Visualisation
 			_, predicted_class = true_pred[0,node_index,:].max(dim=0)
-			self.vizu(edge_mask, node_index, phi,
+			
+			weighted_edge_mask = self.weighted_edge_mask(edge_mask, node_index, phi,
 			          predicted_class, hops)
+			
+			G = self.denoise_graph(weighted_edge_mask, phi[self.F:,predicted_class], 
+						node_index, feat=self.data.x, label=self.data.y, threshold_num=10)
+
+			self.log_graph(
+							self.writer,
+							G,
+                            "graph/{}_{}".format(self.args_dataset,
+                                                    node_index),
+							identify_self=True,
+                        )
+
+			# Vizu nodes and
+			# ax, G = self.visualize_subgraph(self.model,
+			# 						node_index,
+			# 						self.data.edge_index,
+			# 						weighted_edge_mask,
+			# 						hops,
+			# 						y=self.data.y,
+			# 						threshold=None)
+
+		# plt.savefig('demo.png', bbox_inches='tight')
 
 		return phi
 
@@ -274,7 +302,7 @@ class GraphSHAP():
 			print('Most influential neighbours: ', [
 			      (item[0].item(), item[1].item()) for item in list(influential_nei.items())])
 
-	def vizu(self, edge_mask, node_index, phi, predicted_class, hops):
+	def weighted_edge_mask(self, edge_mask, node_index, phi, predicted_class, hops):
 		"""
 		:param edge_mask: vector of size data.edge_index with False if edge is not included in subgraph around node_index
 		:param node_index: node of interest
@@ -283,6 +311,7 @@ class GraphSHAP():
 		:param hops: number of hops considered for subgraph around node of interest 
 		Vizu of important nodes in subgraph of node_index
 		"""
+
 		# Replace False by 0, True by 1 in edge_mask
 		mask = torch.zeros(self.data.edge_index.shape[1])
 		for i, val in enumerate(edge_mask):
@@ -304,20 +333,185 @@ class GraphSHAP():
 		mask[mask == 1] = 0
 
 		# Increase coef for visibility and consider absolute contribution
-		mask = torch.abs(mask)*2
+		mask = torch.abs(mask)
 
-		# Vizu nodes and
-		ax, G = self.visualize_subgraph(self.model,
-                             node_index,
-                             self.data.edge_index,
-                             mask,
-                             hops,
-                             y=self.data.y,
-                             threshold=None)
+		return mask
 
-		plt.savefig('demo.png', bbox_inches='tight')
-		#plt.show()
+	def denoise_graph(self, weighted_edge_mask, node_explanations, node_idx, feat=None, label=None, threshold_num=10):
+		"""Cleaning a graph by thresholding its node values.
 
+		Args:
+			- weighted_edge_mask:  Edge mask, with importance given to each edge
+			- node_explanations :  Shapley values for neighbours
+			- node_idx          :  Index of node to highlight (TODO ?)
+			- feat              :  An array of node features.
+			- label             :  A list of node labels.
+			- theshold_num      :  The maximum number of nodes to threshold.
+		"""
+		# Disregard size of explanations
+		node_explanations = np.abs(node_explanations)
+
+		# Create graph of neighbourhood of node of interest
+		G = nx.Graph()
+		G.add_nodes_from(self.neighbours.detach().numpy())
+		G.add_node(node_idx)
+		G.nodes[node_idx]["self"] = 1
+		if feat is not None:
+			for node in G.nodes():
+				G.nodes[node]["feat"] = feat[node].detach().numpy()
+		if label is not None:
+			for node in G.nodes():
+				G.nodes[node]["label"] = label[node].item()
+
+		# Find importance threshold required to retrieve 10 most import nei.
+		threshold_num = min(len(self.neighbours), threshold_num)
+		threshold = np.sort(
+			node_explanations)[-threshold_num]
+
+		# Keep edges that satisfy the threshold
+		weighted_edge_list = [
+			(self.data.edge_index[0, i].item(),
+                            self.data.edge_index[1, i].item(), weighted_edge_mask[i].item())
+			for i, _ in enumerate(weighted_edge_mask)
+			if weighted_edge_mask[i] > threshold
+		]
+		G.add_weighted_edges_from(weighted_edge_list)
+
+		#Keep nodes that satisfy the threshold
+		del_nodes = []
+		for i, node in enumerate(G.nodes()):
+			if node!=node_idx:
+				if node_explanations[i] < threshold:
+					del_nodes.append(node)
+		G.remove_nodes_from(del_nodes)
+		
+		# Remove isolated nodes
+		G.remove_nodes_from(list(nx.isolates(G)))
+
+		# Remove disconnected components without node_idx
+		if not nx.is_connected(G):
+			for comp in nx.connected_components(G):
+				if node in comp:
+					G = G.subgraph(list(comp))
+
+		return G
+
+	def log_graph(self,
+               writer,
+               Gc,
+               name,
+               identify_self=True,
+               nodecolor="label",
+               epoch=0,
+               fig_size=(4, 3),
+               dpi=300,
+               label_node_feat=False,
+               edge_vmax=None,
+               args=None):
+		"""
+		Args:
+			nodecolor: the color of node, can be determined by 'label', or 'feat'. For feat, it needs to
+				be one-hot'
+		"""
+		cmap = plt.get_cmap("Set1")
+		plt.switch_backend("agg")
+		fig = plt.figure(figsize=fig_size, dpi=dpi)
+
+		node_colors = []
+		# edge_colors = [min(max(w, 0.0), 1.0) for (u,v,w) in Gc.edges.data('weight', default=1)]
+		edge_colors = [w for (u, v, w) in Gc.edges.data("weight", default=1)]
+
+		# maximum value for node color
+		vmax = 8
+		for i in Gc.nodes():
+			if nodecolor == "feat" and "feat" in Gc.nodes[i]:
+				num_classes = Gc.nodes[i]["feat"].size()[0]
+				if num_classes >= 10:
+					cmap = plt.get_cmap("tab20")
+					vmax = 19
+				elif num_classes >= 8:
+					cmap = plt.get_cmap("tab10")
+					vmax = 9
+				break
+
+		feat_labels = {}
+		for i in Gc.nodes():
+			if identify_self and "self" in Gc.nodes[i]:
+				node_colors.append(0)
+			elif nodecolor == "label" and "label" in Gc.nodes[i]:
+				node_colors.append(Gc.nodes[i]["label"] + 1)
+			elif nodecolor == "feat" and "feat" in Gc.nodes[i]:
+				# print(Gc.nodes[i]['feat'])
+				feat = Gc.nodes[i]["feat"].detach().numpy()
+				# idx with pos val in 1D array
+				feat_class = 0
+				for j in range(len(feat)):
+					if feat[j] == 1:
+						feat_class = j
+						break
+				node_colors.append(feat_class)
+				feat_labels[i] = feat_class
+			else:
+				node_colors.append(1)
+		if not label_node_feat:
+			feat_labels = None
+
+		plt.switch_backend("agg")
+		fig = plt.figure(figsize=fig_size, dpi=dpi)
+
+		if Gc.number_of_nodes() == 0:
+			raise Exception("empty graph")
+		if Gc.number_of_edges() == 0:
+			raise Exception("empty edge")
+		# remove_nodes = []
+		# for u in Gc.nodes():
+		#    if Gc
+		pos_layout = nx.kamada_kawai_layout(Gc, weight=None)
+		# pos_layout = nx.spring_layout(Gc, weight=None)
+
+		weights = [d for (u, v, d) in Gc.edges(data="weight", default=1)]
+		if edge_vmax is None:
+			edge_vmax = statistics.median_high(
+				[d for (u, v, d) in Gc.edges(data="weight", default=1)]
+			)
+		min_color = min([d for (u, v, d) in Gc.edges(data="weight", default=1)])
+		# color range: gray to black
+		edge_vmin = 2 * min_color - edge_vmax
+		nx.draw(
+			Gc,
+			pos=pos_layout,
+			with_labels=False,
+			font_size=4,
+			labels=feat_labels,
+			node_color=node_colors,
+			vmin=0,
+			vmax=vmax,
+			cmap=cmap,
+			edge_color=edge_colors,
+			edge_cmap=plt.get_cmap("Greys"),
+			edge_vmin=edge_vmin,
+			edge_vmax=edge_vmax,
+			width=1.0,
+			node_size=50,
+			alpha=0.8,
+		)
+		fig.axes[0].xaxis.set_visible(False)
+		fig.canvas.draw()
+
+		if args is None:
+			save_path = os.path.join("log/", name + ".pdf")
+		else:
+			save_path = os.path.join(
+				"log", name + gen_explainer_prefix(args) + "_" + str(epoch) + ".pdf"
+			)
+			print("log/" + name + gen_explainer_prefix(args) + "_" + str(epoch) + ".pdf")
+		os.makedirs(os.path.dirname(save_path), exist_ok=True)
+		plt.savefig(save_path, format="pdf")
+
+		img = tensorboardX.utils.figure_to_image(fig)
+		writer.add_image(name, img, epoch)
+
+	
 
 	def visualize_subgraph(self, model, node_idx, edge_index, edge_mask, num_hops, y=None,
 						threshold=None, **kwargs):
@@ -388,8 +582,10 @@ class GraphSHAP():
 		
 		return ax, G
 	
+
 	def __flow__(self, model):
 		for module in model.modules():
 			if isinstance(module, MessagePassing):
 				return module.flow
 		return 'source_to_target'
+
