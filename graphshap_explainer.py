@@ -19,14 +19,13 @@ from utils.io_utils import gen_explainer_prefix, gen_prefix
 
 class GraphSHAP():
 
-	def __init__(self, data, model, adj, x, writer, args_dataset):
+	def __init__(self, data, model, adj, writer, args_dataset):
 		self.model = model
 		self.data = data
 		self.model.eval()
 		self.M = None  # number of nonzero features - for each node index
 		self.neighbours = None
 		self.F = None
-		self.x = x
 		self.adj = adj
 		self.writer = writer
 		self.args_dataset = args_dataset
@@ -70,7 +69,7 @@ class GraphSHAP():
 		s = (z_ != 0).sum(dim=1)
 
 		# Compute true prediction of model, for original instance
-		true_pred, attention_weights = self.model(self.x, self.adj)
+		true_pred, attention_weights = self.model(self.data.x, self.adj)
 
 		### Define weights associated with each sample using shapley kernel formula
 		weights = self.shapley_kernel(s)
@@ -244,7 +243,7 @@ class GraphSHAP():
 		for {} classes'.format(self.F, D, self.data.num_classes))
 
 		# Compare with true prediction of the model - see what class should truly be explained
-		true_pred, _ = self.model(self.x, self.adj)
+		true_pred, _ = self.model(self.data.x, self.adj)
 		pred_value, true_pred = true_pred[0,node_index,:].max(dim=0)
 		print('Prediction of orignal model is class {} while label is {}'.format(
 			true_pred, self.data.y[node_index]))
@@ -318,21 +317,30 @@ class GraphSHAP():
 			if val.item() == True:
 				mask[i] = 1
 
+		# Identify one-hop neighbour
+		one_hop_nei, _, _, _ = k_hop_subgraph(
+							node_index, 1, self.data.edge_index, relabel_nodes=True,
+							num_nodes=None, flow=self.__flow__(self.model))
+
 		# Attribute phi to edges in subgraph bsed on the incident node phi value
 		for i, nei in enumerate(self.neighbours):
 			list_indexes = (self.data.edge_index[0, :] == nei).nonzero()
 			for idx in list_indexes:
-				if self.data.edge_index[1, idx] == node_index:
-					mask[idx] = phi[self.M - len(self.neighbours) + i, predicted_class]
-					break
+				# Remove importance of 1-hop neighbours to 2-hop nei.
+				if nei in one_hop_nei:
+					if self.data.edge_index[1, idx] in one_hop_nei:
+						mask[idx] = phi[self.F + i, predicted_class]
+					else:
+						pass
 				elif mask[idx] == 1:
-					mask[idx] = phi[self.M - len(self.neighbours) + i, predicted_class]
+					mask[idx] = phi[self.F + i, predicted_class]
 			#mask[mask.nonzero()[i].item()]=phi[i, predicted_class]
 
 		# Set to 0 importance of edges related to 0
 		mask[mask == 1] = 0
 
-		# Increase coef for visibility and consider absolute contribution
+		# Consider absolute contribution
+		# Could also increase visibility (but need to also update phi accordingly)
 		mask = torch.abs(mask)
 
 		return mask
@@ -373,7 +381,7 @@ class GraphSHAP():
 			(self.data.edge_index[0, i].item(),
                             self.data.edge_index[1, i].item(), weighted_edge_mask[i].item())
 			for i, _ in enumerate(weighted_edge_mask)
-			if weighted_edge_mask[i] > threshold
+			if weighted_edge_mask[i] >= threshold
 		]
 		G.add_weighted_edges_from(weighted_edge_list)
 
@@ -467,7 +475,7 @@ class GraphSHAP():
 		# for u in Gc.nodes():
 		#    if Gc
 		pos_layout = nx.kamada_kawai_layout(Gc, weight=None)
-		# pos_layout = nx.spring_layout(Gc, weight=None)
+		#pos_layout = nx.spring_layout(Gc, weight=None)
 
 		weights = [d for (u, v, d) in Gc.edges(data="weight", default=1)]
 		if edge_vmax is None:

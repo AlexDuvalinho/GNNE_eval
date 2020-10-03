@@ -364,7 +364,7 @@ def main():
 		k=8 # with 2 hops, only a few appear
 
 	# GraphSHAP explainer
-	graphshap = GraphSHAP(data, model, adj, x, writer, prog_args.dataset)
+	graphshap = GraphSHAP(data, model, adj, writer, prog_args.dataset)
 
 	# Run GNN Explainer and retrieve produced explanations
 	gnne = explain.Explainer(
