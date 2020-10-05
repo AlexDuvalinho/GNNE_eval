@@ -472,7 +472,8 @@ def main():
 		np.mean(grad_edge_accuracy), np.mean(grad_node_accuracy) ) 
 		)
 	if prog_args.dataset=='syn2':
-		print('Most important feature was found in {:.2f}% of the case'.format(np.mean(accuracy)))
+		print('Most important feature was found in {:.2f}% of the case'.format(
+			100*np.mean(feat_accuracy)))
 	
 if __name__ == "__main__":
 	main()

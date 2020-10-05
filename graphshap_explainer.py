@@ -409,6 +409,7 @@ class GraphSHAP():
 			for comp in nx.connected_components(G):
 				if node in comp:
 					G = G.subgraph(list(comp))
+		G = nx.Graph(G) # unfreeze
 		
 		# Remove isolated nodes
 		if list(G.nodes()) != list(nx.isolates(G)):
