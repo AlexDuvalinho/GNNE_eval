@@ -177,7 +177,7 @@ def arg_parse():
 		opt="adam",
 		opt_scheduler="none",
 		gpu="True",
-		cuda="0",
+		cuda="1",
 		lr=0.1,
 		clip=2.0,
 		batch_size=20,
@@ -354,7 +354,10 @@ def main():
 	# Convertion data required to get correct model output for GraphSHAP
 	adj = torch.tensor(cg_dict["adj"], dtype=torch.float)
 	x = torch.tensor(cg_dict["feat"], requires_grad=True, dtype=torch.float)
-	y_pred, att_adj = model(x, adj)
+	if prog_args.gpu:
+		y_pred, att_adj = model(x.cuda(), adj.cuda())
+	else:
+		y_pred, att_adj = model(x, adj)
 
 	# Transform their data into our format 
 	data = transform_data(adj, x, cg_dict["label"][0].tolist())
@@ -377,10 +380,9 @@ def main():
 			k = 8
 		else: 
 			k = 11
-	print('kkkkkkkkkkkk', k)
 
 	# GraphSHAP explainer
-	graphshap = GraphSHAP(data, model, adj, writer, prog_args.dataset)
+	graphshap = GraphSHAP(data, model, adj, writer, prog_args.dataset, prog_args.gpu)
 
 	# Run GNN Explainer and retrieve produced explanations
 	gnne = explain.Explainer(
@@ -429,6 +431,8 @@ def main():
 					i += 1
 			# Sort of accruacy metric
 			accuracy.append(i / len(indices)) 
+
+			print('There are {} from targeted shape among most imp. nodes'.format(i))
 		
 		# Look at importance distribution among features
 		# Identify most important features and check if it corresponds to truly imp ones

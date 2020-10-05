@@ -19,7 +19,7 @@ from utils.io_utils import gen_explainer_prefix, gen_prefix
 
 class GraphSHAP():
 
-	def __init__(self, data, model, adj, writer, args_dataset):
+	def __init__(self, data, model, adj, writer, args_dataset, gpu):
 		self.model = model
 		self.data = data
 		self.model.eval()
@@ -29,6 +29,7 @@ class GraphSHAP():
 		self.adj = adj
 		self.writer = writer
 		self.args_dataset = args_dataset
+		self.gpu = gpu
 
 	def explain(self, node_index=0, hops=2, num_samples=10, info=True):
 		"""
@@ -69,7 +70,11 @@ class GraphSHAP():
 		s = (z_ != 0).sum(dim=1)
 
 		# Compute true prediction of model, for original instance
-		true_pred, attention_weights = self.model(self.data.x, self.adj)
+		if self.gpu:
+			true_pred, attention_weights = self.model(
+				self.data.x.cuda(), self.adj.cuda())
+		else:
+			true_pred, attention_weights = self.model(self.data.x, self.adj)
 
 		### Define weights associated with each sample using shapley kernel formula
 		weights = self.shapley_kernel(s)
@@ -201,7 +206,10 @@ class GraphSHAP():
 			new_adj = new_adj.unsqueeze(0)
 
 			# Apply model on (X,A) as input.
-			proba, _ = self.model(X, new_adj)
+			if self.gpu:
+				proba, _ = self.model(X.cuda(), new_adj.cuda())
+			else:
+				proba, _ = self.model(X, new_adj)
 			proba = proba[0, node_index,:]
 
 			# Store final class prediction and confience level
@@ -243,7 +251,10 @@ class GraphSHAP():
 		for {} classes'.format(self.F, D, self.data.num_classes))
 
 		# Compare with true prediction of the model - see what class should truly be explained
-		true_pred, _ = self.model(self.data.x, self.adj)
+		if self.gpu:
+			true_pred, _ = self.model(self.data.x.cuda(), self.adj.cuda())
+		else:
+			true_pred, _ = self.model(self.data.x, self.adj)
 		pred_value, true_pred = true_pred[0,node_index,:].max(dim=0)
 		print('Prediction of orignal model is class {} while label is {}'.format(
 			true_pred, self.data.y[node_index]))
