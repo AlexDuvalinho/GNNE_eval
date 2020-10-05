@@ -404,14 +404,15 @@ class GraphSHAP():
 					del_nodes.append(node)
 		G.remove_nodes_from(del_nodes)
 		
-		# Remove isolated nodes
-		G.remove_nodes_from(list(nx.isolates(G)))
-
 		# Remove disconnected components without node_idx
 		if not nx.is_connected(G):
 			for comp in nx.connected_components(G):
 				if node in comp:
 					G = G.subgraph(list(comp))
+		
+		# Remove isolated nodes
+		if list(G.nodes()) != list(nx.isolates(G)):
+			G.remove_nodes_from(list(nx.isolates(G)))
 
 		return G
 
