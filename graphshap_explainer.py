@@ -385,10 +385,10 @@ class GraphSHAP():
 		]
 		G.add_weighted_edges_from(weighted_edge_list)
 
-		#Keep nodes that satisfy the threshold
+		#Keep nodes that satisfy the threshold 
 		del_nodes = []
 		for i, node in enumerate(G.nodes()):
-			if node!=node_idx:
+			if node != node_idx:
 				if node_explanations[i] < threshold:
 					del_nodes.append(node)
 		G.remove_nodes_from(del_nodes)

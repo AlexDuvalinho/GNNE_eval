@@ -5,35 +5,31 @@
 """
 import argparse
 import os
-import numpy as np
-from types import SimpleNamespace
-from graphshap_explainer import GraphSHAP
-import networkx as nx
-import matplotlib.pyplot as plt
-
-import sklearn.metrics as metrics
-
-from tensorboardX import SummaryWriter
-
 import pickle
 import shutil
-import torch
+import warnings
+from types import SimpleNamespace
 
-import models
-import utils.io_utils as io_utils
-import utils.parser_utils as parser_utils
-from explainer import explain
+warnings.filterwarnings("ignore")
+
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import sklearn.metrics as metrics
+import torch
+from tensorboardX import SummaryWriter
 
 import configs
 import gengraph
-from explainer import explain
-
-import utils.math_utils as math_utils
-import utils.io_utils as io_utils
-import utils.parser_utils as parser_utils
-import utils.train_utils as train_utils
+import models
 import utils.featgen as featgen
 import utils.graph_utils as graph_utils
+import utils.io_utils as io_utils
+import utils.math_utils as math_utils
+import utils.parser_utils as parser_utils
+import utils.train_utils as train_utils
+from explainer import explain
+from graphshap_explainer import GraphSHAP
 
 
 def arg_parse():
@@ -160,6 +156,18 @@ def arg_parse():
 		dest="explainer_suffix",
 		help="suffix added to the explainer log",
 	)
+	parser.add_argument(
+            "--hops",
+            dest="hops",
+           	type=int,
+            help="k-hop subgraph considered for GraphSHAP",
+        )
+	parser.add_argument(
+            "--num_samples",
+            dest="num_samples",
+			type=int,
+            help="number of samples used to train GraphSHAP",
+        )
 
 	# TODO: Check argument usage
 	parser.set_defaults(
@@ -168,6 +176,7 @@ def arg_parse():
 		dataset="syn1",
 		opt="adam",
 		opt_scheduler="none",
+		gpu="True",
 		cuda="0",
 		lr=0.1,
 		clip=2.0,
@@ -186,6 +195,8 @@ def arg_parse():
 		mask_act="sigmoid",
 		multigraph_class=-1,
 		multinode_class=-1,
+		hops=2,
+		num_samples=100,
 	)
 	return parser.parse_args()
 
@@ -351,17 +362,22 @@ def main():
 	# Generate test nodes
 	# Use only these specific nodes as they are the ones added manually, part of the defined shapes 
 	# node_indices = extract_test_nodes(data, num_samples=10, cg_dict['train_idx'])
-	k=5 # number of nodes for the shape introduced (house, cycle)
+	k = 5 # number of nodes for the shape introduced (house, cycle)
 	if prog_args.dataset == 'syn1':
-		node_indices = list(range(400,425,5))
+		node_indices = list(range(400,450,5))
 	elif prog_args.dataset=='syn2':
-		node_indices = list(range(400,410,5)) + list(range(1100,1110,5))
+		node_indices = list(range(400,425,5)) + list(range(1100,1125,5))
 	elif prog_args.dataset == 'syn4':
-		node_indices = list(range(511,535,6))
-		k=4
+		node_indices = list(range(511,571,6))
+		if prog_args.hops == 2:
+			k = 4
 	elif prog_args.dataset == 'syn5':
-		node_indices = list(range(511, 556, 9))
-		k=8 # with 2 hops, only a few appear
+		node_indices = list(range(511, 601, 9))
+		if prog_args.hops == 2:
+			k = 8
+		else: 
+			k = 11
+	print('kkkkkkkkkkkk', k)
 
 	# GraphSHAP explainer
 	graphshap = GraphSHAP(data, model, adj, writer, prog_args.dataset)
@@ -388,9 +404,9 @@ def main():
 	for node_idx in node_indices: 
 		
 		graphshap_explanations = graphshap.explain(node_idx,
-									hops=2,
-									num_samples=100,
-									info=True)
+                                             hops=prog_args.hops,
+                                             num_samples=prog_args.num_samples,
+											 info=True)
 
 		# Predicted class
 		pred_val, predicted_class = y_pred[0, node_idx, :].max(dim=0)
@@ -400,7 +416,6 @@ def main():
                                                   predicted_class]
 		
 		# Derive ground truth from graph structure 
-		# TODO: check if this holds for other datasets
 		ground_truth = list(range(node_idx+1,node_idx+k))
 
 		# Retrieve top k elements indices form graphshap_node_explanations
@@ -415,6 +430,8 @@ def main():
 			# Sort of accruacy metric
 			accuracy.append(i / len(indices)) 
 		
+		# Look at importance distribution among features
+		# Identify most important features and check if it corresponds to truly imp ones
 		if prog_args.dataset=='syn2':
 			graphshap_feat_explanations = graphshap_explanations[:graphshap.F,
                                                     predicted_class]
@@ -423,11 +440,6 @@ def main():
 				feat_accuracy.append(1)
 			else: 
 				feat_accuracy.append(0)
-			
-			# Look at importance distribution among features 
-			# Identify most important features and check if it corresponds to truly imp ones
-			# feat_imp, feat_indices = torch.topk(torch.tensor(
-            #                 graphshap_feat_explanations), k=10)
 
 	# Metric for graphshap
 	final_accuracy = sum(accuracy)/len(accuracy)
@@ -447,16 +459,16 @@ def main():
             gnne.explain_nodes_gnn_stats(
                 node_indices, prog_args, model="grad")
 
+	### GAT
+	# Nothing for now - implem a GAT on the side and look at weights coef
+
+	### Results 
 	print('Accuracy for GraphSHAP is {:.2f} vs {:.2f},{:.2f} for GNNE vs {:.2f},{:.2f} for GRAD'.format(
 		final_accuracy, np.mean(gnne_edge_accuracy), np.mean(gnne_node_accuracy), 
 		np.mean(grad_edge_accuracy), np.mean(grad_node_accuracy) ) 
 		)
 	if prog_args.dataset=='syn2':
 		print('Most important feature was found in {:.2f}% of the case'.format(np.mean(accuracy)))
-
-	### GAT 
-	# Nothing for now - implem a GAT on the side and look at weights coef 
-
 	
 if __name__ == "__main__":
 	main()
