@@ -411,7 +411,7 @@ class GraphSHAP():
 					G = G.subgraph(list(comp))
 		G = nx.Graph(G) # unfreeze
 		
-		# Remove isolated nodes
+		# Remove isolated nodes - except if this yields the empty graph
 		if list(G.nodes()) != list(nx.isolates(G)):
 			G.remove_nodes_from(list(nx.isolates(G)))
 
@@ -479,25 +479,21 @@ class GraphSHAP():
 
 		plt.switch_backend("agg")
 		fig = plt.figure(figsize=fig_size, dpi=dpi)
-
-		if Gc.number_of_nodes() == 0:
-			raise Exception("empty graph")
-		if Gc.number_of_edges() == 0:
-			raise Exception("empty edge")
-		# remove_nodes = []
-		# for u in Gc.nodes():
-		#    if Gc
 		pos_layout = nx.kamada_kawai_layout(Gc, weight=None)
-		#pos_layout = nx.spring_layout(Gc, weight=None)
 
-		weights = [d for (u, v, d) in Gc.edges(data="weight", default=1)]
-		if edge_vmax is None:
-			edge_vmax = statistics.median_high(
-				[d for (u, v, d) in Gc.edges(data="weight", default=1)]
-			)
-		min_color = min([d for (u, v, d) in Gc.edges(data="weight", default=1)])
-		# color range: gray to black
-		edge_vmin = 2 * min_color - edge_vmax
+		if Gc.number_of_nodes() == 0 or Gc.number_of_edges() == 0:
+			edge_vmax = 1
+			edge_vmin = 0
+		else: 
+			weights = [d for (u, v, d) in Gc.edges(data="weight", default=1)]
+			if edge_vmax is None:
+				edge_vmax = statistics.median_high(
+					[d for (u, v, d) in Gc.edges(data="weight", default=1)]
+				)
+			min_color = min([d for (u, v, d) in Gc.edges(data="weight", default=1)])
+			# color range: gray to black
+			edge_vmin = 2 * min_color - edge_vmax
+			
 		nx.draw(
 			Gc,
 			pos=pos_layout,
