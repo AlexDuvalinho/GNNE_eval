@@ -1,28 +1,29 @@
-import scipy.special
-import numpy as np
-from copy import deepcopy
-import torch_geometric
-import torch
-import matplotlib.pyplot as plt
-import seaborn as sns
-import statistics
 import os
-from copy import copy
+import statistics
+from copy import copy, deepcopy
 from math import sqrt
+import time
+
+import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
+import scipy.special
+import seaborn as sns
 import tensorboardX
-from torch_geometric.nn import MessagePassing
+import torch
+import torch_geometric
 from torch_geometric.data import Data
+from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import k_hop_subgraph, to_networkx
 
 from utils.io_utils import gen_explainer_prefix, gen_prefix
+
 
 class GraphSHAP():
 
 	def __init__(self, data, model, adj, writer, args_dataset, gpu):
 		self.model = model
 		self.data = data
-		self.model.eval()
 		self.M = None  # number of nonzero features - for each node index
 		self.neighbours = None
 		self.F = None
@@ -31,13 +32,25 @@ class GraphSHAP():
 		self.args_dataset = args_dataset
 		self.gpu = gpu
 
+		self.model.eval()
+
 	def explain(self, node_index=0, hops=2, num_samples=10, info=True):
+		""" Explain prediction for a particular node - GraphSHAP method
+
+		Args:
+			node_index (int, optional): index of the node of interest. Defaults to 0.
+			hops (int, optional): number k of k-hop neighbours to consider in the subgraph
+													around node_index. Defaults to 2.
+			num_samples (int, optional): number of samples we want to form GraphSHAP's new dataset.
+													Defaults to 10.
+			info (bool, optional): Print information about explainer's inner workings.
+													And include vizualisation. Defaults to True.
+
+		Returns:
+				[type]: shapley values for features/neighbours that influence node v's pred
 		"""
-		:param node_index: index of the node of interest
-		:param hops: number k of k-hop neighbours to consider in the subgraph around node_index
-		:param num_samples: number of samples we want to form GraphSHAP's new dataset 
-		:return: shapley values for features/neighbours that influence node v's pred
-		"""
+		# Time
+		start = time.time()
 
 		### Determine z' => features and neighbours whose importance is investigated
 
@@ -66,6 +79,9 @@ class GraphSHAP():
 		# Sample z' - binary vector of dimension (num_samples, M)
 		# F node features first, then D neighbours
 		z_ = torch.empty(num_samples, self.M).random_(2)
+		# Add manually empty and full coalitions, key for the theory
+		z_[0, :] = torch.ones(self.M)
+		z_[1, :] = torch.zeros(self.M)
 		# Compute |z'| for each sample z'
 		s = (z_ != 0).sum(dim=1)
 
@@ -75,6 +91,7 @@ class GraphSHAP():
 				self.data.x.cuda(), self.adj.cuda())
 		else:
 			true_pred, attention_weights = self.model(self.data.x, self.adj)
+		_, predicted_class = true_pred[0, node_index, :].max(dim=0)
 
 		### Define weights associated with each sample using shapley kernel formula
 		weights = self.shapley_kernel(s)
@@ -84,15 +101,15 @@ class GraphSHAP():
 		fz = self.compute_pred(node_index, num_samples, D, z_, feat_idx)
 
 		### OLS estimator for weighted linear regression
-		phi = self.OLS(z_, weights, fz)  # dim (M*num_classes)
+		phi, base_value = self.OLS(z_, weights, fz)  # dim (M*num_classes)
+		print('Base value', base_value[predicted_class],
+		      'for class ', predicted_class.item())
 
 		### Print some information
 		if info:
 			self.print_info(D, node_index, phi, feat_idx)
 
 		### Visualisation
-			_, predicted_class = true_pred[0,node_index,:].max(dim=0)
-			
 			weighted_edge_mask = self.weighted_edge_mask(edge_mask, node_index, phi,
 			          predicted_class, hops)
 			
@@ -121,9 +138,14 @@ class GraphSHAP():
 		return phi
 
 	def shapley_kernel(self, s):
-		"""
-		:param s: dimension of z' (number of features + neighbours included)
-		:return: [scalar] value of shapley value 
+		""" Computes a weight for each newly created sample 
+
+		Args:
+			s (tensor): contains dimension of z' for all instances
+				(number of features + neighbours included)
+
+		Returns:
+				[tensor]: shapley kernel value for each sample
 		"""
 		shap_kernel = []
 		# Loop around elements of s in order to specify a special case
@@ -132,7 +154,7 @@ class GraphSHAP():
 			a = s[i].item()
 			# Put an emphasis on samples where all or none features are included
 			if a == 0 or a == self.M:
-				shap_kernel.append(1000)
+				shap_kernel.append(10000)
 			elif scipy.special.binom(self.M, a) == float('+inf'):
 				shap_kernel.append(1)
 			else:
@@ -141,18 +163,21 @@ class GraphSHAP():
 		return torch.tensor(shap_kernel)
 
 	def compute_pred(self, node_index, num_samples, D, z_, feat_idx):
+		""" Construct z from z' and compute prediction f(z) for each sample z'
+			In fact, we build the dataset (z', f(z)), required to train the weighted linear model.
+
+		Args: 
+				Variables are defined exactly as defined in explainer function 
+
+		Returns: 
+				(tensor): f(z) - probability of belonging to each target classes, for all samples z
+				Dimension (N * C) where N is num_samples and C num_classses. 
 		"""
-		Variables are exactly as defined in explainer function, where compute_pred is used
-		This function aims to construct z (from z' and x_v) and then to compute f(z), 
-		meaning the prediction of the new instances with our original model. 
-		In fact, it builds the dataset (z', f(z)), required to train the weighted linear model.
-		:return fz: probability of belonging to each target classes, for all samples z
-		fz is of dimension N*C where N is num_samples and C num_classses. 
-		"""
+		av_feat_values = list(self.data.x.mean(dim=0))
 		# This implies retrieving z from z' - wrt sampled neighbours and node features
 		# We start this process here by storing new node features for v and neigbours to
 		# isolate
-		X_v = torch.zeros([num_samples, self.data.num_features])
+		excluded_feat = {}
 		excluded_nei = {}
 
 		# Do it for each sample
@@ -160,17 +185,18 @@ class GraphSHAP():
 
 			# Define new node features dataset (we only modify x_v for now)
 			# Features where z_j == 1 are kept, others are set to 0
+			feats_id = []
 			for j in range(self.F):
-				if z_[i, j].item() == 1:
-					X_v[i, feat_idx[j].item()] = 1
+				if z_[i, j].item() == 0:
+					feats_id.append(feat_idx[j].item())
+			excluded_feat[i] = feats_id
 
 			# Define new neighbourhood
 			# Store index of neighbours that need to be shut down (not sampled, z_j=0)
 			nodes_id = []
 			for j in range(D):
 				if z_[i, self.F+j] == 0:
-					node_id = self.neighbours[j].item()
-					nodes_id.append(node_id)
+					nodes_id.append(self.neighbours[j].item())
 			# Dico with key = num_sample id, value = excluded neighbour index
 			excluded_nei[i] = nodes_id
 
@@ -181,7 +207,7 @@ class GraphSHAP():
 		pred_confidence = torch.zeros(num_samples)
 
 		# Create new matrix A and X - for each sample ≈ reform z from z'
-		for key, value in excluded_nei.items():
+		for (key, value), (_, value1) in zip(excluded_nei.items(), excluded_feat.items()):
 
 			positions = []
 			# For each excluded neighbour, retrieve the column index of each occurence
@@ -198,7 +224,11 @@ class GraphSHAP():
 			# Change feature vector for node of interest
 			# NOTE: maybe change values of all nodes for features not inlcuded, not just x_v
 			X = deepcopy(self.data.x)
-			X[node_index, :] = X_v[key, :]
+			for val in value1:
+				#X[:, val] = torch.tensor([av_feat_values[val]]*X.shape[0])
+				X[self.neighbours, val] = 0  # torch.tensor([av_feat_values[val]]*D)
+				X[node_index, val] = 0  # torch.tensor([av_feat_values[val]])
+
 			# Transform new data (X, A) to original input form
 			new_adj = torch.zeros(self.data.x.size(0), self.data.x.size(0))
 			for i in range(self.data.edge_index.shape[1]):
@@ -224,14 +254,22 @@ class GraphSHAP():
 
 
 	def OLS(self, z_, weights, fz):
+		""" Ordinary Least Squares Method, weighted
+			Estimates shapely value coefficients
+
+		Args:
+			z_ (tensor): binary vector representing the new instance
+			weights ([type]): shapley kernel weights for z'
+			fz ([type]): prediction f(z) where z is a new instance - formed from z' and x
+
+		Returns:
+			[tensor]: estimated coefficients of our weighted linear regression - on (z', f(z))
+			Dimension (M * num_classes)
 		"""
-		:param z_: z' - binary vector  
-		:param weights: shapley kernel weights for z'
-		:param fz: f(z) where z is a new instance - formed from z' and x
-		:return: estimated coefficients of our weighted linear regression - on (z', f(z))
-		phi is of dimension (M * num_classes)
-		"""
-		# OLS to estimate parameter of Weighted Linear Regression
+		# Add constant term
+		z_ = torch.cat([z_, torch.ones(z_.shape[0], 1)], dim=1)
+
+		# WLS to estimate parameter of Weighted Linear Regression
 		try:
 			tmp = np.linalg.inv(np.dot(np.dot(z_.T, np.diag(weights)), z_))
 		except np.linalg.LinAlgError:  # matrix not invertible
@@ -239,7 +277,7 @@ class GraphSHAP():
 			tmp = np.linalg.inv(tmp + np.diag(np.random.randn(tmp.shape[1])))
 		phi = np.dot(tmp, np.dot(
 			np.dot(z_.T, np.diag(weights)), fz.detach().numpy()))
-		return phi
+		return phi[:-1, :], phi[-1, :]
 
 	def print_info(self, D, node_index, phi, feat_idx):
 		"""

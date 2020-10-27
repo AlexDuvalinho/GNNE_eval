@@ -173,7 +173,7 @@ def arg_parse():
 	parser.set_defaults(
 		logdir="log",
 		ckptdir="ckpt",
-		dataset="syn2",
+		dataset="syn1",
 		opt="adam",
 		opt_scheduler="none",
 		#gpu="True",
