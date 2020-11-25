@@ -150,6 +150,9 @@ class GraphSHAP():
 					#	x=self.data.x.cuda(),
 					#	edge_index=self.adj.cuda()).exp()[node_index].max(dim=0)
 			if self.gpu:
+				device = torch.device(
+					'cuda' if torch.cuda.is_available() else 'cpu')
+				self.model = self.model.to(device)
 				with torch.no_grad():
 					true_pred, attention_weights = self.model(self.data.x.cuda(), self.adj.cuda())
 					true_conf, true_pred = true_pred[0, node_index, :].max(dim=0)
