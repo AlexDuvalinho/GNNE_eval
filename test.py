@@ -157,17 +157,32 @@ def arg_parse():
 		help="suffix added to the explainer log",
 	)
 	parser.add_argument(
-            "--hops",
-            dest="hops",
-           	type=int,
-            help="k-hop subgraph considered for GraphSHAP",
-        )
+			"--hops",
+			dest="hops",
+		   	type=int,
+			help="k-hop subgraph considered for GraphSHAP",
+		)
 	parser.add_argument(
-            "--num_samples",
-            dest="num_samples",
+			"--num_samples",
+			dest="num_samples",
 			type=int,
-            help="number of samples used to train GraphSHAP",
-        )
+			help="number of samples used to train GraphSHAP",
+		)
+	parser.add_argument("--multiclass", type=bool,
+					 help='False if we consider explanations for the predicted class only')
+	parser.add_argument("--hv", type=str,
+					 help="way simplified input is translated to the original input space")
+	parser.add_argument("--feat", type=str,
+					 help="node features considered for hv above")
+	parser.add_argument("--coal", type=str,
+					 help="type of coalition sampler")
+	parser.add_argument("--g", type=str,
+					 help="method used to train g on derived dataset")
+	parser.add_argument("--regu", type=int,
+					 help='None if we do not apply regularisation, 1 if only feat')
+	parser.add_argument("--info", type=bool,
+					 help='True if we want to see info about the explainer')
+
 
 	# TODO: Check argument usage
 	parser.set_defaults(
@@ -176,7 +191,7 @@ def arg_parse():
 		dataset="syn2",
 		opt="adam",
 		opt_scheduler="none",
-		#gpu="True",
+		#gpu="False",
 		cuda="0",
 		lr=0.1,
 		clip=2.0,
@@ -197,6 +212,13 @@ def arg_parse():
 		multinode_class=-1,
 		hops=2,
 		num_samples=100,
+		multiclass=False,
+		hv='compute_pred',
+		feat='Expectation',
+		coal='Smarter',
+		g='WLR_sklearn',
+		regu=None,
+		info=True,
 	)
 	return parser.parse_args()
 
@@ -222,7 +244,7 @@ def preprocess_graph(G, labels, normalize_adj=False):
 		for j, entry in enumerate(row):
 	 		if entry != 0:
  				edge_index = torch.cat((edge_index, torch.tensor([[torch.tensor(i, dtype=torch.int64)], [
-                            torch.tensor(j, dtype=torch.int64)]],  dtype=torch.int64)), dim=1)
+							torch.tensor(j, dtype=torch.int64)]],  dtype=torch.int64)), dim=1)
 
 	# Define features
 	existing_node = list(G.nodes)[-1]
@@ -386,29 +408,35 @@ def main():
 
 	# Run GNN Explainer and retrieve produced explanations
 	gnne = explain.Explainer(
-            model=model,
-            adj=cg_dict["adj"],
-            feat=cg_dict["feat"],
-            label=cg_dict["label"],
-            pred=cg_dict["pred"],
-            train_idx=cg_dict["train_idx"],
-            args=prog_args,
-            writer=writer,
-            print_training=True,
-            graph_mode=graph_mode,
-            graph_idx=prog_args.graph_idx,
-        )
+			model=model,
+			adj=cg_dict["adj"],
+			feat=cg_dict["feat"],
+			label=cg_dict["label"],
+			pred=cg_dict["pred"],
+			train_idx=cg_dict["train_idx"],
+			args=prog_args,
+			writer=writer,
+			print_training=True,
+			graph_mode=graph_mode,
+			graph_idx=prog_args.graph_idx,
+		)
 	
 	# GraphSHAP - assess accuracy of explanations
 	# Loop over test nodes
 	accuracy = []
 	feat_accuracy = []
-	for node_idx in node_indices: 
-		
-		graphshap_explanations = graphshap.explain(node_idx,
-                                             hops=prog_args.hops,
-                                             num_samples=prog_args.num_samples,
-											 info=True)
+	for node_idx in node_indices:
+		graphshap_explanations = graphshap.explain([node_idx],
+												   prog_args.hops,
+												   prog_args.num_samples,
+												   prog_args.info,
+												   prog_args.multiclass,
+												   prog_args.hv,
+												   prog_args.feat,
+												   prog_args.coal,
+												   prog_args.g,
+												   prog_args.regu,
+												   )[0]
 
 		# Predicted class
 		pred_val, predicted_class = y_pred[0, node_idx, :].max(dim=0)
@@ -425,11 +453,11 @@ def main():
 			val, indices = torch.topk(torch.tensor(
 				graphshap_node_explanations.T), k)
 			# could weight importance based on val 
-			for node in graphshap.neighbours[indices][0]: 
+			for node in graphshap.neighbours[indices]: 
 				if node.item() in ground_truth:
 					i += 1
 			# Sort of accruacy metric
-			accuracy.append(i / len(indices[0])) 
+			accuracy.append(i / len(indices)) 
 
 			print('There are {} from targeted shape among most imp. nodes'.format(i))
 		
@@ -458,8 +486,8 @@ def main():
 	### GRAD benchmark
 	#  MetricS to assess quality of predictionsx
 	_, grad_edge_accuracy, grad_auc, grad_node_accuracy =\
-            gnne.explain_nodes_gnn_stats(
-                node_indices, prog_args, model="grad")
+			gnne.explain_nodes_gnn_stats(
+				node_indices, prog_args, model="grad")
 
 	### GAT
 	# Nothing for now - implem a GAT on the side and look at weights coef
