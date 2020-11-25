@@ -173,7 +173,7 @@ def arg_parse():
 	parser.set_defaults(
 		logdir="log",
 		ckptdir="ckpt",
-		dataset="syn1",
+		dataset="syn2",
 		opt="adam",
 		opt_scheduler="none",
 		#gpu="True",
@@ -414,8 +414,7 @@ def main():
 		pred_val, predicted_class = y_pred[0, node_idx, :].max(dim=0)
 
 		# Keep only node explanations 
-		graphshap_node_explanations = graphshap_explanations[graphshap.F:,
-                                                  predicted_class]
+		graphshap_node_explanations = graphshap_explanations[graphshap.F:] #,predicted_class]
 		
 		# Derive ground truth from graph structure 
 		ground_truth = list(range(node_idx+1,node_idx+k))
@@ -424,22 +423,21 @@ def main():
 		if graphshap.neighbours.shape[0] > k: 
 			i = 0
 			val, indices = torch.topk(torch.tensor(
-				graphshap_node_explanations), k)
+				graphshap_node_explanations.T), k)
 			# could weight importance based on val 
-			for node in graphshap.neighbours[indices]: 
-				if node in ground_truth:
+			for node in graphshap.neighbours[indices][0]: 
+				if node.item() in ground_truth:
 					i += 1
 			# Sort of accruacy metric
-			accuracy.append(i / len(indices)) 
+			accuracy.append(i / len(indices[0])) 
 
 			print('There are {} from targeted shape among most imp. nodes'.format(i))
 		
 		# Look at importance distribution among features
 		# Identify most important features and check if it corresponds to truly imp ones
 		if prog_args.dataset=='syn2':
-			graphshap_feat_explanations = graphshap_explanations[:graphshap.F,
-                                                    predicted_class]
-			print('Feature importance graphshap', graphshap_feat_explanations)
+			graphshap_feat_explanations = graphshap_explanations[:graphshap.F] #,predicted_class]
+			print('Feature importance graphshap', graphshap_feat_explanations.T)
 			if np.argsort(graphshap_feat_explanations)[-1] == 0:
 				feat_accuracy.append(1)
 			else: 

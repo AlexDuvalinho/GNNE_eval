@@ -5,6 +5,18 @@ import torch.nn.functional as F
 
 import numpy as np
 
+
+class LinearRegressionModel(nn.Module):
+
+    def __init__(self, input_dim, output_dim):
+        super(LinearRegressionModel, self).__init__()
+        self.linear = nn.Linear(input_dim, output_dim)
+
+    def forward(self, x):
+        y_pred = self.linear(x)
+        return y_pred
+
+
 # GCN basic operation
 class GraphConv(nn.Module):
     def __init__(

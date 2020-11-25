@@ -1,7 +1,9 @@
 import os
 import statistics
+import random
 from copy import copy, deepcopy
 from math import sqrt
+from itertools import combinations
 import time
 
 import matplotlib.pyplot as plt
@@ -13,8 +15,12 @@ import tensorboardX
 import torch
 import torch_geometric
 from torch_geometric.data import Data
+from torch.autograd import Variable
+from torch.utils.data import DataLoader, TensorDataset
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import k_hop_subgraph, to_networkx
+from models import LinearRegressionModel
+from sklearn.metrics import r2_score
 
 from utils.io_utils import gen_explainer_prefix, gen_prefix
 
@@ -78,11 +84,7 @@ class GraphSHAP():
 
 		# Sample z' - binary vector of dimension (num_samples, M)
 		# F node features first, then D neighbours
-		z_ = torch.empty(num_samples, self.M).random_(2)
-		# Add manually empty and full coalitions, key for the theory
-		z_[0, :] = torch.ones(self.M)
-		z_[1, :] = torch.zeros(self.M)
-		# Compute |z'| for each sample z'
+		z_ = self.coalition_sampler(num_samples)
 		s = (z_ != 0).sum(dim=1)
 
 		# Compute true prediction of model, for original instance
@@ -100,10 +102,15 @@ class GraphSHAP():
 		# Retrive z from z' and x_v, then compute f(z)
 		fz = self.compute_pred(node_index, num_samples, D, z_, feat_idx)
 
+		### WLS 
+		phi, base_value = self.WLR(z_, weights, fz, predicted_class)
+		print('Base value', base_value,
+                          'for class ', predicted_class.item())
+
 		### OLS estimator for weighted linear regression
-		phi, base_value = self.OLS(z_, weights, fz)  # dim (M*num_classes)
-		print('Base value', base_value[predicted_class],
-		      'for class ', predicted_class.item())
+		#phi, base_value = self.OLS(z_, weights, fz)  # dim (M*num_classes)
+		#print('Base value', base_value[predicted_class],
+		#      'for class ', predicted_class.item())
 
 		### Print some information
 		if info:
@@ -113,7 +120,7 @@ class GraphSHAP():
 			weighted_edge_mask = self.weighted_edge_mask(edge_mask, node_index, phi,
 			          predicted_class, hops)
 			
-			G = self.denoise_graph(weighted_edge_mask, phi[self.F:,predicted_class], 
+			G = self.denoise_graph(weighted_edge_mask, phi[self.F:], 
 						node_index, feat=self.data.x, label=self.data.y, threshold_num=10)
 
 			self.log_graph(
@@ -136,6 +143,62 @@ class GraphSHAP():
 		# plt.savefig('demo.png', bbox_inches='tight')
 
 		return phi
+	
+	def coalition_sampler(self, num_samples):
+		""" Sample coalitions cleverly given shapley kernel def
+
+		Args:
+			num_samples ([int]): total number of coalitions z_
+
+		Returns:
+			[tensor]: z_ in {0,1}^F x {0,1}^D (num_samples x self.M)
+		"""
+		z_ = torch.ones(num_samples, self.M)
+		z_[1::2] = torch.zeros(num_samples//2, self.M)
+		k = 1
+		i = 2
+		while i < num_samples:
+			if i + 2 * self.M < num_samples and k == 1:
+				z_[i:i+self.M, :] = torch.ones(self.M, self.M)
+				z_[i:i+self.M, :].fill_diagonal_(0)
+				z_[i+self.M:i+2*self.M, :] = torch.zeros(self.M, self.M)
+				z_[i+self.M:i+2*self.M, :].fill_diagonal_(1)
+				i += 2 * self.M
+				k += 1
+			elif k == 1:
+				M = list(range(self.M))
+				random.shuffle(M)
+				for j in range(self.M):
+					z_[i, M[j]] = torch.zeros(1)
+					i += 1
+					if i == num_samples:
+						return z_
+					z_[i, M[j]] = torch.ones(1)
+					i += 1
+					if i == num_samples:
+						return z_
+				k += 1
+			elif k == 2:
+				M = list(combinations(range(self.M), 2))[:num_samples-i+1]
+				random.shuffle(M)
+				for j in range(len(M)):
+					z_[i, M[j][0]] = torch.tensor(0)
+					z_[i, M[j][1]] = torch.tensor(0)
+					i += 1
+					if i == num_samples:
+						return z_
+					z_[i, M[j][0]] = torch.tensor(1)
+					z_[i, M[j][1]] = torch.tensor(1)
+					i += 1
+					if i == num_samples:
+						return z_
+				k += 1
+			else:
+				z_[i:, :] = torch.empty(num_samples-i, self.M).random_(2)
+				return z_
+
+		return z_
+
 
 	def shapley_kernel(self, s):
 		""" Computes a weight for each newly created sample 
@@ -226,8 +289,8 @@ class GraphSHAP():
 			X = deepcopy(self.data.x)
 			for val in value1:
 				#X[:, val] = torch.tensor([av_feat_values[val]]*X.shape[0])
-				X[self.neighbours, val] = 0  # torch.tensor([av_feat_values[val]]*D)
-				X[node_index, val] = 0  # torch.tensor([av_feat_values[val]])
+				X[self.neighbours, val] = torch.tensor([av_feat_values[val]]*D) #0
+				X[node_index, val] = torch.tensor([av_feat_values[val]]) #0
 
 			# Transform new data (X, A) to original input form
 			new_adj = torch.zeros(self.data.x.size(0), self.data.x.size(0))
@@ -251,6 +314,64 @@ class GraphSHAP():
 			fz[key] = proba
 
 		return fz
+	
+	def WLR(self, z_, weights, fz, predicted_class):
+		"""Train a weighted linear regression
+
+		Args:
+			z_ (torch.tensor): data
+			weights (torch.tensor): weights of each sample
+			fz (torch.tensor): y data 
+		"""
+		# Define model
+		our_model = LinearRegressionModel(z_.shape[1], 1)
+
+		# Define optimizer and loss function
+		def weighted_mse_loss(input, target, weight):
+			return (weight * (input - target) ** 2).mean()
+
+		criterion = torch.nn.MSELoss()
+		optimizer = torch.optim.SGD(our_model.parameters(), lr=0.01)
+
+		# Dataloader
+		train = torch.utils.data.TensorDataset(z_, fz[:,predicted_class])
+		train_loader = torch.utils.data.DataLoader(train, batch_size=1)
+
+		# Repeat for several epochs
+		for epoch in range(100):
+
+			av_loss = []
+			for batch_idx, (x, y) in enumerate(train_loader):
+				x, y = Variable(x), Variable(y)
+
+				# Forward pass: Compute predicted y by passing x to the model
+				pred_y = our_model(x)
+
+				# Compute loss
+				#loss = weighted_mse_loss(pred_y, y, weights[batch_idx])
+				loss = criterion(pred_y, y)
+
+				# Zero gradients, perform a backward pass, and update the weights.
+				optimizer.zero_grad()
+				loss.backward()
+				optimizer.step()
+
+				# Store batch loss
+				av_loss.append(loss.item())
+			#print('av loss epoch: ', np.mean(av_loss))
+
+		# Evaluate model
+		our_model.eval()
+		with torch.no_grad():
+			pred = our_model(z_)
+		print('r2 score: ', r2_score(
+			pred, fz[:,predicted_class].detach().numpy(), multioutput='variance_weighted'))
+		print(r2_score(pred, fz[:, predicted_class].detach(
+		).numpy(), multioutput='raw_values'))
+
+		phi, base_value = [param.T for _, param in our_model.named_parameters()]
+		
+		return phi.detach().numpy().astype('float64'), base_value
 
 
 	def OLS(self, z_, weights, fz):
@@ -298,7 +419,7 @@ class GraphSHAP():
 			true_pred, self.data.y[node_index]))
 
 		# Isolate explanations for predicted class - explain model choices
-		pred_explanation = phi[:, true_pred]
+		pred_explanation = phi #[:, predicted_class]
 		# print('Explanation for the class predicted by the model:', pred_explanation)
 
 		# Look at repartition of weights among neighbours and node features
@@ -318,11 +439,11 @@ class GraphSHAP():
 
 		# Select most influential neighbours and/or features (+ or -)
 		if self.F + D > 10:
-			_, idxs = torch.topk(torch.from_numpy(np.abs(pred_explanation)), 6)
+			_, idxs = torch.topk(torch.from_numpy(np.abs(pred_explanation.T)), 6)
 			vals = [pred_explanation[idx] for idx in idxs]
 			influential_feat = {}
 			influential_nei = {}
-			for idx, val in zip(idxs, vals):
+			for idx, val in zip(idxs[0], vals[0]):
 				if idx.item() < self.F:
 					influential_feat[feat_idx[idx]] = val
 				else:
@@ -332,20 +453,20 @@ class GraphSHAP():
 
 		# Most influential features splitted bewteen neighbours and features
 		if self.F > 5:
-			_, idxs = torch.topk(torch.from_numpy(np.abs(pred_explanation[:self.F])), 3)
+			_, idxs = torch.topk(torch.from_numpy(np.abs(pred_explanation[:self.F].T)), 3)
 			vals = [pred_explanation[idx] for idx in idxs]
 			influential_feat = {}
-			for idx, val in zip(idxs, vals):
+			for idx, val in zip(idxs[0], vals[0]):
 				influential_feat[feat_idx[idx]] = val
 			print('Most influential features: ', [
 			      (item[0].item(), item[1].item()) for item in list(influential_feat.items())])
 
 		# Most influential features splitted bewteen neighbours and features
 		if D > 5:
-			_, idxs = torch.topk(torch.from_numpy(np.abs(pred_explanation[self.F:])), 3)
+			_, idxs = torch.topk(torch.from_numpy(np.abs(pred_explanation[self.F:].T)), 3)
 			vals = [pred_explanation[self.F + idx] for idx in idxs]
 			influential_nei = {}
-			for idx, val in zip(idxs, vals):
+			for idx, val in zip(idxs[0], vals[0]):
 				influential_nei[self.neighbours[idx]] = val
 			print('Most influential neighbours: ', [
 			      (item[0].item(), item[1].item()) for item in list(influential_nei.items())])
@@ -378,11 +499,12 @@ class GraphSHAP():
 				# Remove importance of 1-hop neighbours to 2-hop nei.
 				if nei in one_hop_nei:
 					if self.data.edge_index[1, idx] in one_hop_nei:
-						mask[idx] = phi[self.F + i, predicted_class]
+						mask[idx] = torch.from_numpy(
+							phi[self.F + i]).float()  # , predicted_class]
 					else:
 						pass
 				elif mask[idx] == 1:
-					mask[idx] = phi[self.F + i, predicted_class]
+					mask[idx] = torch.from_numpy(phi[self.F + i]).float()#, predicted_class]
 			#mask[mask.nonzero()[i].item()]=phi[i, predicted_class]
 
 		# Set to 0 importance of edges related to 0
@@ -430,7 +552,7 @@ class GraphSHAP():
 			(self.data.edge_index[0, i].item(),
                             self.data.edge_index[1, i].item(), weighted_edge_mask[i].item())
 			for i, _ in enumerate(weighted_edge_mask)
-			if weighted_edge_mask[i] >= threshold
+			if weighted_edge_mask[i] >= torch.tensor(threshold)
 		]
 		G.add_weighted_edges_from(weighted_edge_list)
 
@@ -566,8 +688,6 @@ class GraphSHAP():
 		img = tensorboardX.utils.figure_to_image(fig)
 		writer.add_image(name, img, epoch)
 
-	
-
 	def visualize_subgraph(self, model, node_idx, edge_index, edge_mask, num_hops, y=None,
 						threshold=None, **kwargs):
 		"""Visualizes the subgraph around :attr:`node_idx` given an edge mask
@@ -637,7 +757,6 @@ class GraphSHAP():
 		
 		return ax, G
 	
-
 	def __flow__(self, model):
 		for module in model.modules():
 			if isinstance(module, MessagePassing):
