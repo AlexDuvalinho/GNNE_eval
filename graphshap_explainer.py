@@ -697,30 +697,37 @@ class GraphSHAP():
                 for val in ex_feat:
                     X[self.neighbours, val] = av_feat_values[val].repeat(D)  # 0
 
-            # Transform new data (X, A) to original input form
-            new_adj = torch.zeros(self.data.x.size(0), self.data.x.size(0))
-            for i in range(A.shape[1]):
-                new_adj[A[0, i], A[1, i]] = 1.0
-            new_adj = new_adj.unsqueeze(0)
-            del A
+            # new_adj = torch.zeros(self.data.x.size(0), self.data.x.size(0))
+            # for i in range(A.shape[1]):
+            #     new_adj[A[0, i], A[1, i]] = 1.0
+            # new_adj = new_adj.unsqueeze(0)
+            # del A
 
+            # Transform new data (X, A) to original input form
+            A = torch_geometric.utils.to_dense_adj(A)
+            
             # Apply model on (X,A) as input.
             if self.gpu:
                 with torch.no_grad():
-                    pred, attention_weights = self.model(X.cuda(), new_adj.cuda())
+                    pred, attention_weights = self.model(X.cuda(), A.cuda())
                     proba = pred[0, node_index, :]
             else:
                 with torch.no_grad():
-                        pred, attention_weights = self.model(self.data.x, self.adj)
+                        pred, attention_weights = self.model(X, A)
                         proba = pred[0, node_index, :]
             # Softmax ? No exp(), log()
 
             # Store predicted class label in fz
             if multiclass:
-                fz[key] = proba
+                #fz[key] = proba
+                fct = torch.nn.Softmax(dim=0)
+                fz[key]= fct(proba)
+                
             else:
-                fz[key] = proba[true_pred]
-
+                #fz[key] = proba[true_pred]
+                fct = torch.nn.Softmax(dim=0)
+                fz[key]= fct(proba)[true_pred]
+                
         return fz
 
     def basic_default_2hop(self, node_index, num_samples, D, z_, feat_idx, one_hop_neighbours, args_K, args_feat, discarded_feat_idx, multiclass, true_pred):
@@ -820,25 +827,29 @@ class GraphSHAP():
                             X[l[n], :] = av_feat_values
             
             # Transform new data (X, A) to original input form
-            new_adj = torch.zeros(self.data.x.size(0), self.data.x.size(0))
-            for i in range(A.shape[1]):
-                new_adj[A[0, i], A[1, i]] = 1.0
-            new_adj = new_adj.unsqueeze(0)
+            A = torch_geometric.utils.to_dense_adj(A)
 
+            # Apply model on (X,A) as input.
             if self.gpu:
                 with torch.no_grad():
-                    true_pred, attention_weights = self.model(X.cuda(), new_adj.cuda())
-                    proba = true_pred[0, node_index, :]
+                    pred, attention_weights = self.model(X.cuda(), A.cuda())
+                    proba = pred[0, node_index, :]
             else:
                 with torch.no_grad():
-                    true_pred, attention_weights = self.model(self.data.x, self.adj)
-                    proba = true_pred[0, node_index, :]
+                    pred, attention_weights = self.model(X, A)
+                    proba = pred[0, node_index, :]
+            # Softmax ? No exp(), log()
 
             # Store predicted class label in fz
             if multiclass:
-                fz[key] = proba
+                #fz[key] = proba
+                fct = torch.nn.Softmax(dim=0)
+                fz[key] = fct(proba)
+
             else:
-                fz[key] = proba[true_pred]
+                #fz[key] = proba[true_pred]
+                fct = torch.nn.Softmax(dim=0)
+                fz[key] = fct(proba)[true_pred]
 
         return fz
 
@@ -914,26 +925,28 @@ class GraphSHAP():
                 X[self.neighbours, val] = av_feat_values[val].repeat(D)  # 0
 
             # Transform new data (X, A) to original input form
-            new_adj = torch.zeros(self.data.x.size(0), self.data.x.size(0))
-            for i in range(A.shape[1]):
-                new_adj[A[0, i], A[1, i]] = 1.0
-            new_adj = new_adj.unsqueeze(0)
-
+            A = torch_geometric.utils.to_dense_adj(A)
+            
             # Apply model on (X,A) as input.
             if self.gpu:
                 with torch.no_grad():
-                    true_pred, attention_weights = self.model(X.cuda(), new_adj.cuda())
-                    proba = true_pred[0, node_index, :]
+                    pred, attention_weights = self.model(X.cuda(), A.cuda())
+                    proba = pred[0, node_index, :]
             else:
                 with torch.no_grad():
-                        true_pred, attention_weights = self.model(self.data.x, self.adj)
-                        proba = true_pred[0, node_index, :]
-
+                        pred, attention_weights = self.model(X, A)
+                        proba = pred[0, node_index, :]
+            
             # Store predicted class label in fz
             if multiclass:
-                fz[key] = proba
+                #fz[key] = proba
+                fct = torch.nn.Softmax(dim=0)
+                fz[key]= fct(proba)
+                
             else:
-                fz[key] = proba[true_pred]
+                #fz[key] = proba[true_pred]
+                fct = torch.nn.Softmax(dim=0)
+                fz[key]= fct(proba)[true_pred]
 
         return fz
 
@@ -1028,28 +1041,30 @@ class GraphSHAP():
                                 [[l[n-1]], [l[n]]])), dim=-1)
                             X[l[n], :] = av_feat_values
 
-
             # Transform new data (X, A) to original input form
-            new_adj = torch.zeros(self.data.x.size(0), self.data.x.size(0))
-            for i in range(A.shape[1]):
-                new_adj[A[0, i], A[1, i]] = 1.0
-            new_adj = new_adj.unsqueeze(0)
+            A = torch_geometric.utils.to_dense_adj(A)
 
             # Apply model on (X,A) as input.
             if self.gpu:
                 with torch.no_grad():
-                    true_pred, attention_weights = self.model(X.cuda(), new_adj.cuda())
-                    proba = true_pred[0, node_index, :]
+                    pred, attention_weights = self.model(X.cuda(), A.cuda())
+                    proba = pred[0, node_index, :]
             else:
                 with torch.no_grad():
-                    true_pred, attention_weights = self.model(self.data.x, self.adj)
-                    proba = true_pred[0, node_index, :]
+                    pred, attention_weights = self.model(X, A)
+                    proba = pred[0, node_index, :]
 
             # Store predicted class label in fz
             if multiclass:
-                fz[key] = proba
+                #fz[key] = proba
+                fct = torch.nn.Softmax(dim=0)
+                fz[key] = fct(proba)
+
             else:
-                fz[key] = proba[true_pred]
+                #fz[key] = proba[true_pred]
+                fct = torch.nn.Softmax(dim=0)
+                fz[key] = fct(proba)[true_pred]
+
 
         return fz
 
@@ -1118,26 +1133,29 @@ class GraphSHAP():
                 X[node_index, discarded_feat_idx] = av_feat_values[discarded_feat_idx]
 
             # Transform new data (X, A) to original input form
-            new_adj = torch.zeros(self.data.x.size(0), self.data.x.size(0))
-            for i in range(A.shape[1]):
-                new_adj[A[0, i], A[1, i]] = 1.0
-            new_adj = new_adj.unsqueeze(0)
+            A = torch_geometric.utils.to_dense_adj(A)
 
             # Apply model on (X,A) as input.
             if self.gpu:
                 with torch.no_grad():
-                    true_pred, attention_weights = self.model(X.cuda(), new_adj.cuda())
-                    proba = true_pred[0, node_index, :]
+                    pred, attention_weights = self.model(X.cuda(), A.cuda())
+                    proba = pred[0, node_index, :]
             else:
                 with torch.no_grad():
-                        true_pred, attention_weights = self.model(self.data.x, self.adj)
-                        proba = true_pred[0, node_index, :]
+                    pred, attention_weights = self.model(X, A)
+                    proba = pred[0, node_index, :]
 
             # Store predicted class label in fz
             if multiclass:
-                fz[key] = proba
+                #fz[key] = proba
+                fct = torch.nn.Softmax(dim=0)
+                fz[key] = fct(proba)
+
             else:
-                fz[key] = proba[true_pred]
+                #fz[key] = proba[true_pred]
+                fct = torch.nn.Softmax(dim=0)
+                fz[key] = fct(proba)[true_pred]
+
 
         return fz
 
@@ -1244,18 +1262,29 @@ class GraphSHAP():
                             A = torch.cat((A, torch.tensor(
                                 [[l[n-1]], [l[n]]])), dim=-1)
                             X[l[n], :] = av_feat_values
+                # Transform new data (X, A) to original input form
+                A = torch_geometric.utils.to_dense_adj(A)
 
                 # Apply model on (X,A) as input.
                 if self.gpu:
                     with torch.no_grad():
-                        proba = self.model(x=X.cuda(), edge_index=A.cuda()).exp()[
-                            node_index]
+                        pred, attention_weights = self.model(X.cuda(), A.cuda())
+                        proba = pred[0, node_index, :]
                 else:
                     with torch.no_grad():
-                        proba = self.model(x=X, edge_index=A).exp()[node_index]
+                        pred, attention_weights = self.model(X, A)
+                        proba = pred[0, node_index, :]
 
                 # Store predicted class label in fz
-                fz[key] = proba
+                if multiclass:
+                    #fz[key] = proba
+                    fct = torch.nn.Softmax(dim=0)
+                    fz[key] = fct(proba)
+
+                else:
+                    #fz[key] = proba[true_pred]
+                    fct = torch.nn.Softmax(dim=0)
+                    fz[key] = fct(proba)[true_pred]
 
         else:
             fz = self.compute_pred(node_index, num_samples, D, z_, feat_idx,
