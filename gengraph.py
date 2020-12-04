@@ -154,12 +154,18 @@ def gen_syn2(nb_shapes=100, width_basis=350):
     """
     basis_type = "ba"
 
-    random_mu = [0.0] * 9
-    random_sigma = [1.0] * 9 #CHANGE, was 8 
+    random_mu = [0.0] * 8 # Change to 9
+    random_sigma = [1.0] * 8 # Change to 9
 
-    # Create two grids   # CHANGES BELOW was (-1) and 2 respectively (LHS)
-    mu_1, sigma_1 = np.array([-2.0] * 1 + random_mu), np.array([0.5] * 1 + random_sigma)
-    mu_2, sigma_2 = np.array([2.0] * 1 + random_mu), np.array([0.5] * 1 + random_sigma)
+    # # Create two grids   # CHANGES BELOW was (-1) and 2 respectively (LHS)
+    # mu_1, sigma_1 = np.array([-2.0] * 1 + random_mu), np.array([0.5] * 1 + random_sigma)
+    # mu_2, sigma_2 = np.array([2.0] * 1 + random_mu), np.array([0.5] * 1 + random_sigma)
+
+    # Create two grids
+    mu_1, sigma_1 = np.array(
+        [-1.0] * 2 + random_mu), np.array([0.5] * 2 + random_sigma)
+    mu_2, sigma_2 = np.array(
+        [1.0] * 2 + random_mu), np.array([0.5] * 2 + random_sigma)
     feat_gen_G1 = featgen.GaussianFeatureGen(mu=mu_1, sigma=sigma_1)
     feat_gen_G2 = featgen.GaussianFeatureGen(mu=mu_2, sigma=sigma_2)
     G1, role_id1, name = gen_syn1(feature_generator=feat_gen_G1, m=4)
