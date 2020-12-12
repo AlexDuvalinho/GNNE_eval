@@ -159,23 +159,36 @@ class GraphSHAP():
                 # Def range of endcases considered
                 args_K = 2
 
-                weights = torch.zeros(num_samples, dtype=torch.float64)
-                # Features only
-                num = num_samples//2
-                z_bis = eval('self.' + args_coal)(num,
-                                                  args_K, 1)  # SmarterRegu
-                s = (z_bis != 0).sum(dim=1)
-                weights[:num] = self.shapley_kernel(s, self.F)
-                z_ = torch.zeros(num_samples, self.M)
-                z_[:num, :self.F] = z_bis
-                # Node only
-                z_bis = eval('self.' + args_coal)(
-                    num + num_samples % 2, args_K, 0)  # SmarterRegu
-                s = (z_bis != 0).sum(dim=1)
-                weights[num:] = self.shapley_kernel(s, D)
-                z_[num:, :] = torch.ones(num + num_samples % 2, self.M)
-                z_[num:, self.F:] = z_bis
-                del z_bis, s
+                if args_coal == 'SmarterRegu':
+                    weights = torch.zeros(num_samples, dtype=torch.float64)
+                    # Features only
+                    num = num_samples//2
+                    z_bis = eval('self.' + args_coal)(num,
+                                                    args_K, 1)  # SmarterRegu
+                    s = (z_bis != 0).sum(dim=1)
+                    weights[:num] = self.shapley_kernel(s, self.F)
+                    z_ = torch.zeros(num_samples, self.M)
+                    z_[:num, :self.F] = z_bis
+                    # Node only
+                    z_bis = eval('self.' + args_coal)(
+                        num + num_samples % 2, args_K, 0)  # SmarterRegu
+                    s = (z_bis != 0).sum(dim=1)
+                    weights[num:] = self.shapley_kernel(s, D)
+                    z_[num:, :] = torch.ones(num + num_samples % 2, self.M)
+                    z_[num:, self.F:] = z_bis
+                    del z_bis, s
+                    
+                else: 
+                    ### COALITIONS: sample z' - binary vector of dimension (num_samples, M)
+                    z_ = eval('self.' + args_coal)(num_samples, args_K, regu)
+                    
+                    # Compute |z'| for each sample z': number of non-zero entries
+                    s = (z_ != 0).sum(dim=1)
+
+                    ### GRAPHSHAP KERNEL: define weights associated with each sample 
+                    weights = self.shapley_kernel(s, self.M)
+                    if max(weights) > 9 and info:
+                        print('!! Empty or/and full coalition is included !!')
 
             else:
                 # Determine z': features and neighbours whose importance is investigated
