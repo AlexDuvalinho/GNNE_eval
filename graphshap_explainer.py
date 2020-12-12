@@ -140,9 +140,9 @@ class GraphSHAP():
                     # Feature intermediate rep
                     mean_subgraph = self.data.x[node_index, :]
                     # Select relevant features only - (E-e,E+e)
-                    mean_subgraph = torch.where(mean_subgraph > mean - 0.25*std, mean_subgraph,
+                    mean_subgraph = torch.where(mean_subgraph >= mean - 0.25*std, mean_subgraph,
                                                 torch.ones_like(mean_subgraph)*100)
-                    mean_subgraph = torch.where(mean_subgraph < mean + 0.25*std, mean_subgraph,
+                    mean_subgraph = torch.where(mean_subgraph <= mean + 0.25*std, mean_subgraph,
                                                 torch.ones_like(mean_subgraph)*100)
                     feat_idx = (mean_subgraph == 100).nonzero()
                     discarded_feat_idx = (mean_subgraph != 100).nonzero()
@@ -214,9 +214,9 @@ class GraphSHAP():
                     mean_subgraph = self.data.x[self.neighbours, :].mean(
                         axis=0)
                     # Select relevant features only - (E-e,E+e)
-                    mean_subgraph = torch.where(mean_subgraph > mean - 0.25*std, mean_subgraph,
+                    mean_subgraph = torch.where(mean_subgraph >= mean - 0.25*std, mean_subgraph,
                                                 torch.ones_like(mean_subgraph)*100)
-                    mean_subgraph = torch.where(mean_subgraph < mean + 0.25*std, mean_subgraph,
+                    mean_subgraph = torch.where(mean_subgraph <= mean + 0.25*std, mean_subgraph,
                                                 torch.ones_like(mean_subgraph)*100)
                     feat_idx = (mean_subgraph == 100).nonzero()
                     discarded_feat_idx = (mean_subgraph != 100).nonzero()
