@@ -387,21 +387,22 @@ def main():
 	# Generate test nodes
 	# Use only these specific nodes as they are the ones added manually, part of the defined shapes 
 	# node_indices = extract_test_nodes(data, num_samples=10, cg_dict['train_idx'])
-	k = 5 # number of nodes for the shape introduced (house, cycle)
+	k = 4 # number of nodes for the shape introduced (house, cycle)
+	K = k+1 # number of most important nodes we look at
 	if prog_args.dataset == 'syn1':
 		node_indices = list(range(400,450,5))
 	elif prog_args.dataset=='syn2':
 		node_indices = list(range(400,425,5)) + list(range(1100,1125,5))
 	elif prog_args.dataset == 'syn4':
 		node_indices = list(range(511,571,6))
-		if prog_args.hops == 2:
-			k = 4
+		if prog_args.hops > 2:
+			k = 5
 	elif prog_args.dataset == 'syn5':
 		node_indices = list(range(511, 601, 9))
 		if prog_args.hops == 2:
-			k = 8
+			k = 5
 		else: 
-			k = 11
+			k = 8
 
 	# GraphSHAP explainer
 	graphshap = GraphSHAP(data, model, adj, writer, prog_args.dataset, prog_args.gpu)
@@ -445,19 +446,19 @@ def main():
 		graphshap_node_explanations = graphshap_explanations[graphshap.F:] #,predicted_class]
 		
 		# Derive ground truth from graph structure 
-		ground_truth = list(range(node_idx+1,node_idx+k))
+		ground_truth = list(range(node_idx+1,node_idx+k+1))
 
 		# Retrieve top k elements indices form graphshap_node_explanations
 		if graphshap.neighbours.shape[0] > k: 
 			i = 0
 			val, indices = torch.topk(torch.tensor(
-				graphshap_node_explanations.T), k)
+				graphshap_node_explanations.T), K)
 			# could weight importance based on val 
 			for node in graphshap.neighbours[indices]: 
 				if node.item() in ground_truth:
 					i += 1
 			# Sort of accruacy metric
-			accuracy.append(i / len(indices)) 
+			accuracy.append(i / k) 
 
 			print('There are {} from targeted shape among most imp. nodes'.format(i))
 		
@@ -478,7 +479,7 @@ def main():
 	# Explain a set of nodes - accuracy on edges this time
 	_, gnne_edge_accuracy, gnne_auc, gnne_node_accuracy =\
 		gnne.explain_nodes_gnn_stats(
-			node_indices, prog_args
+			node_indices, prog_args, K=K
 		)
 
 	# Tune k inside explain_nodes_gnn_stats (top k nodes/edges investigated)
@@ -487,7 +488,7 @@ def main():
 	#  MetricS to assess quality of predictionsx
 	_, grad_edge_accuracy, grad_auc, grad_node_accuracy =\
 			gnne.explain_nodes_gnn_stats(
-				node_indices, prog_args, model="grad")
+				node_indices, prog_args, model="grad", K=K)
 
 	### GAT
 	# Nothing for now - implem a GAT on the side and look at weights coef

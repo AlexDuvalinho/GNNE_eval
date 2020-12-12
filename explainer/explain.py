@@ -292,13 +292,13 @@ class Explainer:
         return masked_adjs
 
 
-    def explain_nodes_gnn_stats(self, node_indices, args, graph_idx=0, model="exp"):
+    def explain_nodes_gnn_stats(self, node_indices, args, graph_idx=0, model="exp", K=10):
         masked_adjs = [
             self.explain(node_idx, graph_idx=graph_idx, model=model)
             for node_idx in node_indices
         ]
         # Define number of edges in specific the shape introduced
-        k = 10 if self.args.dataset == 'syn5' else 6
+        k = 12 if self.args.dataset == 'syn5' else 6
 
         # pdb.set_trace()
         graphs = []
@@ -328,10 +328,22 @@ class Explainer:
             # Compute importance of nodes based on all incident edges (av. imp)
             n = np.concatenate((np.mean(denoised_adj, axis=1)), axis=1).tolist()[0]
             # Check among (k-2) most important nodes, how many are member of the shape
-            node_imp.append(
-                len( set(np.array(G.nodes())[np.argsort(n)[-k+2:]]
-                    ).intersection(set(range(new_idx+1, new_idx+k))) ) / (k-2) 
-            )
+            K = k+1
+            if self.args.dataset == 'syn4':
+                node_imp.append(
+                    len( set(np.array(G.nodes())[np.argsort(n)[-K+1:]]
+                        ).intersection(set(range(new_idx+1, new_idx+k))) ) / (k-1) 
+                )
+            if self.args.dataset == 'syn5':
+                node_imp.append(
+                    len( set(np.array(G.nodes())[np.argsort(n)[-K+3:]]
+                        ).intersection(set(range(new_idx+1, new_idx+k-3))) ) / (k-3) 
+                )
+            else: 
+                node_imp.append(
+                    len( set(np.array(G.nodes())[np.argsort(n)[-K+2:]]
+                        ).intersection(set(range(new_idx+1, new_idx+k-1))) ) / (k-2) 
+                )
         
         # Also look at top 6 edges (because cycle - adapt to grid dataset)
         # Compute accuracy: how many of top 6 belong to shape
