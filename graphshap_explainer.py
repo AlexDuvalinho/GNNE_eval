@@ -1876,7 +1876,7 @@ class GraphSHAP():
             (self.data.edge_index[0, i].item(),
                             self.data.edge_index[1, i].item(), weighted_edge_mask[i].item())
             for i, _ in enumerate(weighted_edge_mask)
-            if weighted_edge_mask[i] >= threshold
+            if weighted_edge_mask[i] > threshold
         ]
         G.add_weighted_edges_from(weighted_edge_list)
 
