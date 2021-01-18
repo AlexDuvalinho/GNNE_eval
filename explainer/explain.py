@@ -326,24 +326,22 @@ class Explainer:
                 identify_self=True,
             )
             # Compute importance of nodes based on all incident edges (av. imp)
-            n = np.concatenate((np.mean(denoised_adj, axis=1)), axis=1).tolist()[0]
+            #n = np.concatenate((np.mean(denoised_adj, axis=1)), axis=1).tolist()[0]
+            n = []
+            for row in denoised_adj:
+                n.append(row[row!=0].mean())
+
             # Check among (k-2) most important nodes, how many are member of the shape
-            K = k+1
-            if self.args.dataset == 'syn4':
-                node_imp.append(
-                    len( set(np.array(G.nodes())[np.argsort(n)[-K+1:]]
-                        ).intersection(set(range(new_idx+1, new_idx+k))) ) / (k-1) 
-                )
-            if self.args.dataset == 'syn5':
-                node_imp.append(
-                    len( set(np.array(G.nodes())[np.argsort(n)[-K+3:]]
-                        ).intersection(set(range(new_idx+1, new_idx+k-3))) ) / (k-3) 
-                )
+            if args.dataset =='syn4': 
+                K=6
+            if args.dataset == 'syn5':
+                K=8
             else: 
-                node_imp.append(
-                    len( set(np.array(G.nodes())[np.argsort(n)[-K+2:]]
-                        ).intersection(set(range(new_idx+1, new_idx+k-1))) ) / (k-2) 
-                )
+                K=5
+            node_imp.append(
+                len( set(np.array(G.nodes())[np.argsort(n)[-K:]]
+                    ).intersection(set(range(new_idx+1, new_idx+K))) ) / (K-1) 
+            )
         
         # Also look at top 6 edges (because cycle - adapt to grid dataset)
         # Compute accuracy: how many of top 6 belong to shape
@@ -406,13 +404,13 @@ class Explainer:
                 max_component=False,
             )
 
-            io_utils.log_graph(
-                self.writer,
-                G_orig,
-                "graph/graphidx_{}".format(graph_idx),
-                identify_self=False,
-                nodecolor="feat",
-            )
+            # io_utils.log_graph(
+            #     self.writer,
+            #     G_orig,
+            #     "graph/graphidx_{}".format(graph_idx),
+            #     identify_self=False,
+            #     nodecolor="feat",
+            # )
 
         # plot cmap for graphs' node features
         io_utils.plot_cmap_tb(self.writer, "tab20", 20, "tab20_cmap")
