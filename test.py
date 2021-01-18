@@ -181,6 +181,10 @@ def arg_parse():
                      help='None if we do not apply regularisation, 1 if only feat')
     parser.add_argument("--info", type=bool,
                      help='True if we want to see info about the explainer')
+    parser.add_argument("--fullempty", type=str, default=None,
+                        help='True if want to discard full and empty coalitions')
+    parser.add_argument("--S", type=int, default=3,
+                        help='Max size of coalitions sampled in priority and treated specifically')
 
 
     # TODO: Check argument usage
@@ -192,8 +196,8 @@ def arg_parse():
         graph_mode=False,
         opt="adam",
         opt_scheduler="none",
-        gpu=False,
-        cuda="0",
+        gpu=True,
+        cuda="1",
         lr=0.1,
         clip=2.0,
         batch_size=20,
@@ -212,10 +216,12 @@ def arg_parse():
         multigraph_class=-1,
         multinode_class=-1,
         hops=2,
-        num_samples=400,
+        num_samples=200,
         multiclass=False,
+        fullempty=None,
+        S=3,
         hv='compute_pred',
-        feat='All',
+        feat='Expectation',
         coal='Smarter',
         g='WLR_sklearn',
         regu=None,
@@ -449,6 +455,8 @@ def main():
                                                    prog_args.num_samples,
                                                    prog_args.info,
                                                    prog_args.multiclass,
+                                                   prog_args.fullempty,
+                                                   prog_args.S,
                                                    prog_args.hv,
                                                    prog_args.feat,
                                                    prog_args.coal,
