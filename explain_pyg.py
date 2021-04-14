@@ -32,8 +32,8 @@ def test(loader, model, args, labels, test_mask):
         # print ('label:', label)
             
         correct += pred.eq(label).sum().item()
-    
-    total = len(test_mask) 
+
+    total = (test_mask == True).nonzero().shape[0]
     # print ('correct:', correct)
     return correct / total
 
@@ -75,8 +75,9 @@ def syn_task1(args, writer=None):
     test_mask = num_train * [False] + num_test * [True]
     test_mask = torch.BoolTensor([test_mask[i] for i in shuffle_indices])
 
+
     loader = torch_geometric.data.DataLoader([pyg_G], batch_size=1)
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay= args.weight_decay)
     for epoch in range(args.num_epochs):
         total_loss = 0
         model.train()
@@ -91,6 +92,7 @@ def syn_task1(args, writer=None):
             # print ('label:', label)
             loss = model.loss(pred, label)
             print ('loss:', loss)
+            nn.utils.clip_grad_norm(model.parameters(), args.clip)
             loss.backward()
             opt.step()
             total_loss += loss.item() * 1

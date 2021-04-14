@@ -293,12 +293,13 @@ class Explainer:
 
 
     def explain_nodes_gnn_stats(self, node_indices, args, graph_idx=0, model="exp", K=10):
-        masked_adjs = [
-            self.explain(node_idx, graph_idx=graph_idx, model=model)
-            for node_idx in node_indices
-        ]
+        start = time.time()
+        masked_adjs = [self.explain(node_idx, graph_idx=graph_idx, model=model)
+                    for node_idx in node_indices]
         # Define number of edges in specific the shape introduced
         k = 12 if self.args.dataset == 'syn5' else 6
+        end = time.time()
+        print('GNNE Time:', end - start)
 
         # pdb.set_trace()
         graphs = []
@@ -342,6 +343,7 @@ class Explainer:
                 len( set(np.array(G.nodes())[np.argsort(n)[-K:]]
                     ).intersection(set(range(new_idx+1, new_idx+K))) ) / (K-1) 
             )
+            #list_of_imp_nodes.append(list(np.array(G.nodes())[np.argsort(n)[-K:]]))
         
         # Also look at top 6 edges (because cycle - adapt to grid dataset)
         # Compute accuracy: how many of top 6 belong to shape

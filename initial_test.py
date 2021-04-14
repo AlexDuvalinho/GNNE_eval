@@ -1,37 +1,35 @@
-# The whole frame from GNN Explainer to get data and model 
+# The whole frame from GNN Explainer to get data and model
 """ explainer_main.py
 
      Main user interface for the explainer module.
 """
+from graphshap_explainer import GraphSHAP
+from explainer import explain
+import utils.train_utils as train_utils
+import utils.parser_utils as parser_utils
+import utils.math_utils as math_utils
+import utils.io_utils as io_utils
+import utils.graph_utils as graph_utils
+import utils.featgen as featgen
+import models
+import gengraph
+import configs
+from tensorboardX import SummaryWriter
+import torch
+import sklearn.metrics as metrics
+import numpy as np
+import networkx as nx
+import matplotlib.pyplot as plt
 import argparse
 import os
 import pickle
 import shutil
 import warnings
 from types import SimpleNamespace
-from copy import deepcopy
 import time 
 
 warnings.filterwarnings("ignore")
 
-import matplotlib.pyplot as plt
-import networkx as nx
-import numpy as np
-import sklearn.metrics as metrics
-import torch
-from tensorboardX import SummaryWriter
-
-import configs
-import gengraph
-import models
-import utils.featgen as featgen
-import utils.graph_utils as graph_utils
-import utils.io_utils as io_utils
-import utils.math_utils as math_utils
-import utils.parser_utils as parser_utils
-import utils.train_utils as train_utils
-from explainer import explain
-from graphshap_explainer import GraphSHAP
 
 def arg_parse():
     parser = argparse.ArgumentParser(description="GNN Explainer arguments.")
@@ -158,42 +156,41 @@ def arg_parse():
         help="suffix added to the explainer log",
     )
     parser.add_argument(
-            "--hops",
-            dest="hops",
-               type=int,
-            help="k-hop subgraph considered for GraphSHAP",
-        )
+        "--hops",
+        dest="hops",
+        type=int,
+        help="k-hop subgraph considered for GraphSHAP",
+    )
     parser.add_argument(
-            "--num_samples",
-            dest="num_samples",
-            type=int,
-            help="number of samples used to train GraphSHAP",
-        )
+        "--num_samples",
+        dest="num_samples",
+        type=int,
+        help="number of samples used to train GraphSHAP",
+    )
     parser.add_argument("--multiclass", type=bool,
-                     help='False if we consider explanations for the predicted class only')
+                        help='False if we consider explanations for the predicted class only')
     parser.add_argument("--hv", type=str,
-                     help="way simplified input is translated to the original input space")
+                        help="way simplified input is translated to the original input space")
     parser.add_argument("--feat", type=str,
-                     help="node features considered for hv above")
+                        help="node features considered for hv above")
     parser.add_argument("--coal", type=str,
-                     help="type of coalition sampler")
+                        help="type of coalition sampler")
     parser.add_argument("--g", type=str,
-                     help="method used to train g on derived dataset")
+                        help="method used to train g on derived dataset")
     parser.add_argument("--regu", type=int,
-                     help='None if we do not apply regularisation, 1 if only feat')
+                        help='None if we do not apply regularisation, 1 if only feat')
     parser.add_argument("--info", type=bool,
-                     help='True if we want to see info about the explainer')
+                        help='True if we want to see info about the explainer')
     parser.add_argument("--fullempty", type=str, default=None,
                         help='True if want to discard full and empty coalitions')
     parser.add_argument("--S", type=int, default=3,
                         help='Max size of coalitions sampled in priority and treated specifically')
 
-
     # TODO: Check argument usage
     parser.set_defaults(
         logdir="log",
         ckptdir="ckpt",
-        dataset="syn1",
+        dataset="syn5",
         #bmname='Mutagenicity',
         graph_mode=False,
         opt="adam",
@@ -203,7 +200,7 @@ def arg_parse():
         lr=0.1,
         clip=2.0,
         batch_size=20,
-        num_epochs=150,
+        num_epochs=100,
         hidden_dim=20,
         output_dim=20,
         num_gc_layers=3,
@@ -211,20 +208,20 @@ def arg_parse():
         method="base",
         name_suffix="",
         explainer_suffix="",
-        align_steps=100,
+        align_steps=1000,
         explain_node=None,
         graph_idx=-1,
         mask_act="sigmoid",
         multigraph_class=-1,
         multinode_class=-1,
         hops=2,
-        num_samples=65,
+        num_samples=50,
         multiclass=False,
         fullempty=None,
-        S=1,
+        S=4,
         hv='compute_pred',
         feat='Expectation',
-        coal='SmarterSeparate',
+        coal='Smarter',
         g='WLR_sklearn',
         regu=None,
         info=True,
@@ -244,16 +241,17 @@ def preprocess_graph(G, labels, normalize_adj=False):
     # Define adj matrix
     adj = np.array(nx.to_numpy_matrix(G))
     if normalize_adj:
-        sqrt_deg = np.diag(1.0 / np.sqrt(np.sum(adj, axis=0, dtype=float).squeeze()))
+        sqrt_deg = np.diag(
+            1.0 / np.sqrt(np.sum(adj, axis=0, dtype=float).squeeze()))
         adj = np.matmul(np.matmul(sqrt_deg, adj), sqrt_deg)
 
     ajd = torch.tensor(adj, dtype=torch.int64)[0]
     edge_index = torch.tensor([[], []], dtype=torch.int64)
     for i, row in enumerate(adj):
         for j, entry in enumerate(row):
-             if entry != 0:
-                 edge_index = torch.cat((edge_index, torch.tensor([[torch.tensor(i, dtype=torch.int64)], [
-                            torch.tensor(j, dtype=torch.int64)]],  dtype=torch.int64)), dim=1)
+            if entry != 0:
+                edge_index = torch.cat((edge_index, torch.tensor([[torch.tensor(i, dtype=torch.int64)], [
+                    torch.tensor(j, dtype=torch.int64)]],  dtype=torch.int64)), dim=1)
 
     # Define features
     existing_node = list(G.nodes)[-1]
@@ -279,7 +277,7 @@ def transform_data(adj, x, labels):
         for j, entry in enumerate(row):
             if entry != 0:
                 data.edge_index = torch.cat((data.edge_index, torch.tensor([[torch.tensor(i, dtype=torch.int64)], [
-                                torch.tensor(j, dtype=torch.int64)]],  dtype=torch.int64)), dim=1)
+                    torch.tensor(j, dtype=torch.int64)]],  dtype=torch.int64)), dim=1)
 
     # Define features
     feat_dim = x.size(2)
@@ -307,7 +305,7 @@ def extract_test_nodes(data, num_samples, train_indexes):
     :return: list of indexes representing nodes used as test samples
     """
 
-    test_indices = list( set(range(300, 700, 5)) - set(train_indexes) )
+    test_indices = list(set(range(300, 700, 5)) - set(train_indexes))
     node_indices = np.random.choice(test_indices, num_samples).tolist()
 
     return node_indices
@@ -393,62 +391,154 @@ def main():
     else:
         y_pred, att_adj = model(x, adj)
 
-    # Transform their data into our format 
+    # Transform their data into our format
     data = transform_data(adj, x, cg_dict["label"][0].tolist())
-    
+
     # Generate test nodes
-    # Use only these specific nodes as they are the ones added manually, part of the defined shapes 
+    # Use only these specific nodes as they are the ones added manually, part of the defined shapes
     # node_indices = extract_test_nodes(data, num_samples=10, cg_dict['train_idx'])
-    k = 4 # number of nodes for the shape introduced (house, cycle)
-    K = 0 
+    k = 4  # number of nodes for the shape introduced (house, cycle)
+    K = 0
     if prog_args.dataset == 'syn1':
-        node_indices = list(range(400,410,5))
-    elif prog_args.dataset=='syn2':
-        node_indices = list(range(400,405,5)) + list(range(1100,1105,5))
+        node_indices = list(range(400, 450, 5))
+    elif prog_args.dataset == 'syn2':
+        node_indices = list(range(400, 425, 5)) + list(range(1100, 1125, 5))
     elif prog_args.dataset == 'syn4':
-        node_indices = list(range(511,523,6))
+        node_indices = list(range(511, 571, 6))
         if prog_args.hops == 3:
             k = 5
-        else: 
+        else:
             K = 5
     elif prog_args.dataset == 'syn5':
-        node_indices = list(range(511, 529, 9))
+        node_indices = list(range(511, 601, 9))
         if prog_args.hops == 3:
-            k = 7
-            K = 8
-        else: 
+            k = 8
+        else:
             k = 5
             K = 8
 
     # GraphSHAP explainer
-    # graphshap = GraphSHAP(data, model, adj, writer, prog_args.dataset, prog_args.gpu)
+    graphshap = GraphSHAP(data, model, adj, writer,
+                          prog_args.dataset, prog_args.gpu)
 
     # Run GNN Explainer and retrieve produced explanations
-    
     gnne = explain.Explainer(
-            model=model,
-            adj=cg_dict["adj"],
-            feat=cg_dict["feat"],
-            label=cg_dict["label"],
-            pred=cg_dict["pred"],
-            train_idx=cg_dict["train_idx"],
-            args=prog_args,
-            writer=writer,
-            print_training=True,
-            graph_mode=graph_mode,
-            graph_idx=prog_args.graph_idx,
-        )
+        model=model,
+        adj=cg_dict["adj"],
+        feat=cg_dict["feat"],
+        label=cg_dict["label"],
+        pred=cg_dict["pred"],
+        train_idx=cg_dict["train_idx"],
+        args=prog_args,
+        writer=writer,
+        print_training=True,
+        graph_mode=graph_mode,
+        graph_idx=prog_args.graph_idx,
+    )
 
-    ### GNNE 
+    #if prog_args.explain_node is not None:
+    # _, gnne_edge_accuracy, gnne_auc, gnne_node_accuracy = \
+    #     gnne.explain_nodes_gnn_stats(
+    #         node_indices, prog_args
+    # )
+    # elif graph_mode:
+    #     # Graph explanation
+    #     gnne_expl = gnne.explain_graphs([1])[0]
+
+    # GraphSHAP - assess accuracy of explanations
+    # Loop over test nodes
+    accuracy = []
+    feat_accuracy = []
+    for node_idx in node_indices:
+        start = time.time()
+        graphshap_explanations = graphshap.explain([node_idx],
+                                                   prog_args.hops,
+                                                   prog_args.num_samples,
+                                                   prog_args.info,
+                                                   prog_args.multiclass,
+                                                   prog_args.fullempty,
+                                                   prog_args.S,
+                                                   prog_args.hv,
+                                                   prog_args.feat,
+                                                   prog_args.coal,
+                                                   prog_args.g,
+                                                   prog_args.regu,
+                                                   )[0]
+
+        end = time.time()
+        print('GS Time:', end-start)
+
+        # Predicted class
+        pred_val, predicted_class = y_pred[0, node_idx, :].max(dim=0)
+
+        # Keep only node explanations
+        # ,predicted_class]
+        graphshap_node_explanations = graphshap_explanations[graphshap.F:]
+
+        # Derive ground truth from graph structure
+        ground_truth = list(range(node_idx+1, node_idx+max(k, K)+1))
+
+        # Retrieve top k elements indices form graphshap_node_explanations
+        if graphshap.neighbours.shape[0] > k:
+            i = 0
+            val, indices = torch.topk(torch.tensor(
+                graphshap_node_explanations.T), k+1)
+            # could weight importance based on val
+            for node in graphshap.neighbours[indices]:
+                if node.item() in ground_truth:
+                    i += 1
+            # Sort of accruacy metric
+            accuracy.append(i / k)
+
+            print('There are {} from targeted shape among most imp. nodes'.format(i))
+
+        # Look at importance distribution among features
+        # Identify most important features and check if it corresponds to truly imp ones
+        if prog_args.dataset == 'syn2':
+            # ,predicted_class]
+            graphshap_feat_explanations = graphshap_explanations[:graphshap.F]
+            print('Feature importance graphshap',
+                  graphshap_feat_explanations.T)
+            if np.argsort(graphshap_feat_explanations)[-1] == 0:
+                feat_accuracy.append(1)
+            else:
+                feat_accuracy.append(0)
+
+    # Metric for graphshap
+    final_accuracy = sum(accuracy)/len(accuracy)
+
+    ### GNNE
     # Explain a set of nodes - accuracy on edges this time
-    t = time.time()
-    gnne_edge_accuracy, gnne_auc, gnne_node_accuracy, important_nodes_gnne =\
+    _, gnne_edge_accuracy, gnne_auc, gnne_node_accuracy =\
         gnne.explain_nodes_gnn_stats(
             node_indices, prog_args
         )
-    e = time.time()
-    print('Time: ', e-t)
-    
+
+    ### GRAD benchmark
+    #  MetricS to assess quality of predictionsx
+    """
+    _, grad_edge_accuracy, grad_auc, grad_node_accuracy =\
+            gnne.explain_nodes_gnn_stats(
+                node_indices, prog_args, model="grad")
+    """
+    grad_edge_accuracy = 0
+    grad_node_accuracy = 0
+
+    ### GAT
+    # Nothing for now - implem a GAT on the side and look at weights coef
+
+    ### Results
+    print('Accuracy for GraphSHAP is {:.2f} vs {:.2f},{:.2f} for GNNE vs {:.2f},{:.2f} for GRAD'.format(
+        final_accuracy, np.mean(
+            gnne_edge_accuracy), np.mean(gnne_node_accuracy),
+        np.mean(grad_edge_accuracy), np.mean(grad_node_accuracy))
+    )
+    if prog_args.dataset == 'syn2':
+        print('Most important feature was found in {:.2f}% of the case'.format(
+            100*np.mean(feat_accuracy)))
+
+    print('GNNE_auc is:', gnne_auc)
+
 
 if __name__ == "__main__":
     main()

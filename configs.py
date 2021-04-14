@@ -75,11 +75,11 @@ def arg_parse():
     parser.set_defaults(datadir='data', # io_parser
                         logdir='log',
                         ckptdir='ckpt',
-                        dataset='syn2',
+                        dataset='syn1',
                         opt='adam',   # opt_parser
                         opt_scheduler='none',
                         max_nodes=100,
-                        cuda='1',
+                        cuda='0',
                         feature_type='default',
                         lr=0.001,
                         clip=2.0,

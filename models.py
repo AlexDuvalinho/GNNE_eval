@@ -229,7 +229,7 @@ class GcnEncoderGraph(nn.Module):
         out_tensor = torch.zeros(batch_size, max_nodes)
         for i, mask in enumerate(packed_masks):
             out_tensor[i, : batch_num_nodes[i]] = mask
-        return out_tensor.unsqueeze(2).cuda()
+        return out_tensor.unsqueeze(2)
 
     def apply_bn(self, x):
         """ Batch normalization of 3D tensor x

@@ -55,7 +55,7 @@ def prepare_data(graphs, args, test_graphs=None, max_nodes=0):
     else:
         train_idx = int(len(graphs) * args.train_ratio)
         train_graphs = graphs[:train_idx]
-        val_graphs = graph[train_idx:]
+        val_graphs = graphs[train_idx:]
     print(
         "Num training graphs: ",
         len(train_graphs),
@@ -177,13 +177,13 @@ def train(
                 all_adjs = torch.cat((all_adjs, prev_adjs), dim=0)
                 all_feats = torch.cat((all_feats, prev_feats), dim=0)
                 all_labels = torch.cat((all_labels, prev_labels), dim=0)
-            adj = Variable(data["adj"].float(), requires_grad=False).cuda()
-            h0 = Variable(data["feats"].float(), requires_grad=False).cuda()
-            label = Variable(data["label"].long()).cuda()
+            adj = Variable(data["adj"].float(), requires_grad=False)
+            h0 = Variable(data["feats"].float(), requires_grad=False)
+            label = Variable(data["label"].long())
             batch_num_nodes = data["num_nodes"].int().numpy() if mask_nodes else None
             assign_input = Variable(
                 data["assign_feats"].float(), requires_grad=False
-            ).cuda()
+            )
 
             ypred, att_adj = model(h0, adj, batch_num_nodes, assign_x=assign_input)
             if batch_idx < 5:
@@ -496,13 +496,13 @@ def evaluate(dataset, model, args, name="Validation", max_num_examples=None):
     labels = []
     preds = []
     for batch_idx, data in enumerate(dataset):
-        adj = Variable(data["adj"].float(), requires_grad=False).cuda()
-        h0 = Variable(data["feats"].float()).cuda()
+        adj = Variable(data["adj"].float(), requires_grad=False)
+        h0 = Variable(data["feats"].float())
         labels.append(data["label"].long().numpy())
         batch_num_nodes = data["num_nodes"].int().numpy()
         assign_input = Variable(
             data["assign_feats"].float(), requires_grad=False
-        ).cuda()
+        )
 
         ypred, att_adj = model(h0, adj, batch_num_nodes, assign_x=assign_input)
         _, indices = torch.max(ypred, 1)
@@ -572,7 +572,7 @@ def ppi_essential_task(args, writer=None):
         print("Method: attn")
     else:
         print("Method:", args.method)
-        args.loss_weight = torch.tensor([1, 5.0], dtype=torch.float).cuda()
+        args.loss_weight = torch.tensor([1, 5.0], dtype=torch.float)
         model = models.GcnEncoderNode(
             input_dim,
             args.hidden_dim,
@@ -921,7 +921,7 @@ def benchmark_task(args, writer=None, feat="node-label"):
             bn=args.bn,
             dropout=args.dropout,
             args=args,
-        ).cuda()
+        )
 
     train(
         train_dataset,
@@ -969,7 +969,7 @@ def benchmark_task_val(args, writer=None, feat="node-label"):
             bn=args.bn,
             dropout=args.dropout,
             args=args,
-        ).cuda()
+        )
 
         _, val_accs = train(
             train_dataset,
@@ -1112,11 +1112,13 @@ def arg_parse():
         datadir="data",  # io_parser
         logdir="log",
         ckptdir="ckpt",
-        dataset="syn1",
+        dataset="syn5",
         opt="adam",  # opt_parser
+        #bmname='Mutagenicity',
+        graphmode=False,
         opt_scheduler="none",
         max_nodes=100,
-        cuda="1",
+        cuda="0",
         feature_type="default",
         lr=0.001,
         clip=2.0,
@@ -1140,7 +1142,9 @@ def arg_parse():
 
 
 def main():
-    prog_args = configs.arg_parse()
+    prog_args = arg_parse()
+    #prog_args.cuda = 0
+    #prog_args.gpu = False
 
     path = os.path.join(prog_args.logdir, io_utils.gen_prefix(prog_args))
     writer = SummaryWriter(path)
@@ -1152,6 +1156,8 @@ def main():
         print("Using CPU")
 
     # use --bmname=[dataset_name] for Reddit-Binary, Mutagenicity
+    #prog_args.bmname='Mutagenicity'
+    #prog_args.graphmode=True
     if prog_args.bmname is not None:
         benchmark_task(prog_args, writer=writer)
     elif prog_args.pkl_fname is not None:
